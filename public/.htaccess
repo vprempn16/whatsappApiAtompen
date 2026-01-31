@@ -1,0 +1,37 @@
+<IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+
+    RewriteEngine On
+
+    # Force HTTPS redirect with port 8004
+    # Redirect HTTP to HTTPS on port 8004
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP_HOST} ^([^:]+)(:.*)?$
+    RewriteRule ^(.*)$ https://%1:8004%{REQUEST_URI} [L,R=301]
+    
+    # Redirect HTTPS on wrong port to port 8004
+    RewriteCond %{HTTPS} on
+    RewriteCond %{SERVER_PORT} !^8004$
+    RewriteCond %{HTTP_HOST} ^([^:]+)(:.*)?$
+    RewriteRule ^(.*)$ https://%1:8004%{REQUEST_URI} [L,R=301]
+
+    # Handle Authorization Header
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Handle X-XSRF-Token Header
+    RewriteCond %{HTTP:x-xsrf-token} .
+    RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
+
+    # Redirect Trailing Slashes If Not A Folder...
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} (.+)/$
+    RewriteRule ^ %1 [L,R=301]
+
+    # Send Requests To Front Controller...
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [L]
+</IfModule>
