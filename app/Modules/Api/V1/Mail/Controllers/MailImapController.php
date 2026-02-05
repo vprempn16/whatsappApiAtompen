@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Services\Mail\MailService;
 use App\Traits\ResultTrait;
+use Illuminate\Support\Facades\Validator;
 
 class MailImapController extends Controller
 {
@@ -22,38 +23,97 @@ class MailImapController extends Controller
      * Save / Update IMAP configuration
      */
     public function store(Request $request)
-{
-    $orgId  = auth()->user()->organization_id;
-    $userId = auth()->id();
+    {
+        $orgId  = auth()->user()->organization_id;
+        $userId = auth()->id();
 
-    if (!$orgId) {
-        return $this->error('Organization not found');
+        if (!$orgId) {
+            return $this->error('Organization not found');
+        }
+        $data = $request->input('data.values');
+        if (!$data) {
+            return $this->error('Invalid payload structure');
+        }
+
+        $validator = Validator::make($data, [
+            'host' => 'required|string',
+            'port' => 'required|integer',
+            'encryption' => 'required|string',
+            'username' => 'required|string',
+            'password' => 'required|string',
+            'folder' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            $message = collect($validator->errors()->all())->implode(',');
+            return $this->error($message);
+        }
+
+        $data = $validator->validated();
+        $data['organization_id'] = $orgId;
+        $data['created_by'] = $userId;
+
+        try {
+            $imap = $this->mailService->createImapServer($data);
+            return $this->success($imap, 'IMAP server saved successfully');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage());
+        }
     }
 
-    $data = $request->only([
-        'mail_server_id',
-        'host',
-        'port',
-        'encryption',
-        'username',
-        'password',
-        'folder',
-    ]);
+    public function update($id, Request $request)
+    {
+        $orgId = auth()->user()->organization_id;
 
-    if (empty($data['mail_server_id'])) {
-        return $this->error('Mail server id is required');
+        if (!$orgId) {
+            return $this->error('Organization not found');
+        }
+
+        $data = $request->input('data.values');
+        if (!$data) {
+            return $this->error('Invalid payload structure');
+        }
+
+        $validator = Validator::make($data, [
+            'host' => 'required|string',
+            'port' => 'required|integer',
+            'encryption' => 'required|string',
+            'username' => 'required|string',
+            'password' => 'nullable|string', // Optional on update
+            'folder' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            $message = collect($validator->errors()->all())->implode(',');
+            return $this->error($message);
+        }
+
+        $data = $validator->validated();
+        $data['organization_id'] = $orgId;
+
+        try {
+            $imap = $this->mailService->updateImapServer($id, $data);
+            return $this->success($imap, 'IMAP server updated successfully');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage());
+        }
     }
 
-    $data['organization_id'] = $orgId;
-    $data['created_by'] = $userId;
+    public function show($id)
+    {
+        $orgId = auth()->user()->organization_id;
 
-    try {
-        $imap = $this->mailService->saveImapServer($data);
-        return $this->success($imap, 'IMAP server saved successfully');
-    } catch (\Throwable $e) {
-        return $this->error($e->getMessage());
+        if (!$orgId) {
+            return $this->error('Organization not found');
+        }
+        
+        try {
+            $server = $this->mailService->getImapServer($id, $orgId);
+            return $this->success($server, 'IMAP server details fetched');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage());
+        }
     }
-}
 
     /**
      * Test IMAP connection

@@ -45,6 +45,17 @@ use App\Modules\Api\V1\Zapier\Controllers\ZapierImportLogController;
 use App\Modules\Api\V1\Zapier\Controllers\ZapierWebhookController;
 use App\Modules\Api\V1\Zapier\Controllers\ZapierCachedImportController;
 
+#MAILBOX
+use App\Modules\Api\V1\Mailbox\Controllers\FolderController;
+use App\Modules\Api\V1\Mailbox\Controllers\MailboxController;
+use App\Modules\Api\V1\Mailbox\Controllers\LabelController;
+use App\Modules\Api\V1\Mailbox\Controllers\DraftController;
+use App\Modules\Api\V1\Mailbox\Controllers\SearchController;
+use App\Modules\Api\V1\Mailbox\Controllers\SignatureController;
+use App\Modules\Api\V1\Mailbox\Controllers\SentController;
+
+
+
 Route::prefix('v1')->middleware('api')->group(function () {
     // ========================================
     // PUBLIC ROUTES (No Authentication Required)
@@ -138,7 +149,9 @@ Route::prefix('v1')->middleware('api')->group(function () {
 		});
 	Route::prefix('settings/outgoing-server')->group(function () {
 		Route::get('/servers', [MailServerController::class, 'index']);
-		Route::post('/save', [MailServerController::class, 'store']);
+		Route::post('/new', [MailServerController::class, 'store']);
+		Route::get('/{id}', [MailServerController::class, 'show']);
+		Route::post('/{id}', [MailServerController::class, 'update']);
 		Route::delete('/{id}', [MailServerController::class, 'destroy']);
 		Route::post('/{id}/connect', [MailServerController::class, 'connect']);
 		Route::patch('/{id}/set-outgoing', [MailServerController::class, 'setOutgoing']);
@@ -146,12 +159,46 @@ Route::prefix('v1')->middleware('api')->group(function () {
 
 	Route::prefix('mail')->group(function () {   
 		Route::post('/send', [MailSendController::class, 'send']);
-		Route::post('imap', [MailImapController::class, 'store']);
+		Route::post('imap/new', [MailImapController::class, 'store']);
+		Route::get('imap/{id}', [MailImapController::class, 'show']);
+		Route::post('imap/{id}', [MailImapController::class, 'update']);
 		Route::post('imap/{id}/connect', [MailImapController::class, 'connect']);
 		Route::get('imap/{id}/inbox', [MailImapController::class, 'inbox']);
 		Route::get('imap/{id}/thread/{threadId}', [MailImapController::class, 'showThread']);
 		Route::get('imap/{id}/search', [MailImapController::class, 'search']);
 	});
+
+    // ========================================
+    // Mailbox (Unified)
+    // ========================================
+    Route::prefix('mailbox')->group(function () {
+        // Core
+
+        Route::get('inbox', [MailboxController::class, 'index']);
+        Route::get('email/{id}', [MailboxController::class, 'show']);
+        Route::post('compose', [MailboxController::class, 'send']);
+        Route::post('bulk-action', [MailboxController::class, 'bulkAction']);
+        
+        // Sent
+        Route::get('sent', [SentController::class, 'index']);
+        Route::get('sent/{id}', [SentController::class, 'show']);
+
+        // Folders by server
+		Route::get('folders/server/{mailServerId}', [FolderController::class,'listByServer']);
+		
+		Route::post('drafts/new', [DraftController::class, 'store']);
+		Route::post('drafts/{id}', [DraftController::class, 'update']);
+		Route::delete('drafts/{id}', [DraftController::class, 'destroy']);
+		Route::get('drafts/{id}', [DraftController::class, 'show']);
+		Route::get('drafts/server/{mailServerId}', [DraftController::class, 'index']);
+        // Resources
+        Route::resource('folders', FolderController::class);
+		
+        Route::resource('labels', LabelController::class);
+
+
+        Route::resource('signatures', SignatureController::class);
+    });
 
         // ========================================
         // Global Search & Filters (BEFORE generic module routes)
@@ -246,7 +293,6 @@ Route::prefix('v1')->middleware('api')->group(function () {
         // Quotation Specific Routes
         // ========================================
 		Route::prefix('Quotation')->group(function () {
-			Route::get('/', [QuotationController::class, 'index']);
 			Route::get('headers', function () {
 				return app(RecordController::class)->headerfields('Quotation');
 			});
@@ -337,6 +383,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			
 			// Module-based mail sending
 			Route::post('{recordId}/mail/send', [MailSendController::class, 'sendFromRecord']);
+			Route::post('{recordId}/mailbox/compose', [MailboxController::class, 'composeFromRecord']);
 		});
 	});
 });

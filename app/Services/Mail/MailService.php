@@ -9,57 +9,169 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Str;
 use App\Mail\GenericMail;
+use App\Services\AuditLogService;
 
 class MailService{
 
-	public function saveServer(array $data)
-	{
-		$orgId = $data['organization_id'];
-		$username = $data['username'];
+    protected $auditLogService;
 
-		// Validate SMTP credentials before saving
-		if (!empty($data['host']) && !empty($data['port']) && !empty($data['username']) && !empty($data['password'])) {
-			$validationResult = $this->validateSmtpCredentials(
-				$data['host'],
-				$data['port'],
-				$data['username'],
-				$data['password'],
-				$data['encryption'] ?? 'tls',
-				$data['from_email'] ?? $data['username']
-			);
+    public function __construct(AuditLogService $auditLogService)
+    {
+        $this->auditLogService = $auditLogService;
+    }
 
-			if (!$validationResult['valid']) {
-				throw new \Exception($validationResult['error']);
-			}
-		}
+    /**
+     * Get Mail Object (Factory wrapper)
+     */
+    public function getMailObject(string $module, string $recordId)
+    {
+        return \App\Services\Mail\MailObject::make($module, $recordId);
+    }
 
-		if (!empty($data['password'])) {
-			$data['password'] = Crypt::encryptString($data['password']);
-		}
+    public function createOutgoingServer(array $data)
+    {
+        $orgId = $data['organization_id'];
+        $username = $data['username'];
 
-		$server = MailServer::where('organization_id', $orgId)
-			->where('username', $username)
-			->where('deleted', 0)
-			->first();
+        // Check for duplicates
+        $exists = MailServer::where('organization_id', $orgId)
+            ->where('username', $username)
+            ->where('deleted', 0)
+            ->exists();
 
-		if ($server) {
-			// Update existing
-			$server->update([
-				...$data,
-				'updated_at' => now(),
-			]);
+        if ($exists) {
+            throw new \Exception('Outgoing server with this username already exists.');
+        }
 
-			return $server;
-		}
+        // Validate SMTP credentials
+        $validationResult = $this->validateSmtpCredentials(
+            $data['host'],
+            $data['port'],
+            $data['username'],
+            $data['password'],
+            $data['encryption'] ?? 'tls',
+            $data['from_email'] ?? $data['username']
+        );
 
-		// Create new
-		return MailServer::create([
-			...$data,
-			'id' => (string) Str::uuid(),
-			'created_at' => now(),
-			'deleted' => 0,
-		]);
-	}
+        if (!$validationResult['valid']) {
+            throw new \Exception($validationResult['error']);
+        }
+
+        if (!empty($data['password'])) {
+            $data['password'] = Crypt::encryptString($data['password']);
+        }
+
+        $server = MailServer::create([
+            ...$data,
+            'id' => (string) Str::uuid(),
+            'created_at' => now(),
+            'deleted' => 0,
+        ]);
+
+        // Audit Log
+        $this->auditLogService->create([
+            'entity_name' => 'MailServer',
+            'entity_id' => $server->id,
+            'new_values' => $server->toArray(),
+            'old_values' => [],
+            'organization_id' => $orgId,
+        ], 'Outgoing Mail Server Created');
+
+        return $server;
+    }
+
+    public function updateOutgoingServer($id, array $data)
+    {
+        $orgId = $data['organization_id'];
+
+        $server = MailServer::where('id', $id)
+            ->where('organization_id', $orgId)
+            ->where('deleted', 0)
+            ->first();
+
+        if (!$server) {
+            throw new \Exception('Server not found.');
+        }
+
+        // Validate SMTP credentials
+        // Use new data or fallback to existing
+        $host = $data['host'] ?? $server->host;
+        $port = $data['port'] ?? $server->port;
+        $username = $data['username'] ?? $server->username;
+        $password = $data['password'] ?? null; // Raw password if providing new one
+        $encryption = $data['encryption'] ?? $server->encryption;
+        $fromEmail = $data['from_email'] ?? ($data['username'] ?? $server->username);
+
+        // If password is NOT provided, we need to decrypt existing one for validation? 
+        // Or if password is NOT provided, we assume it hasn't changed.
+        // But validateSmtpCredentials needs a raw password.
+        
+        if (empty($password)) {
+             try {
+                $decryptedPassword = Crypt::decryptString($server->password);
+             } catch (\Exception $e) {
+                // If we can't decrypt, we can't validate. Force user to re-enter?
+                // Or skip validation? User said "validateSmtpCrrdentials is more important".
+                // We should validate.
+                $decryptedPassword = $server->password; // Fallback if not encrypted (should check)
+             }
+             $passwordToValidate = $decryptedPassword;
+        } else {
+             $passwordToValidate = $password;
+        }
+
+        $validationResult = $this->validateSmtpCredentials(
+            $host,
+            $port,
+            $username,
+            $passwordToValidate,
+            $encryption,
+            $fromEmail
+        );
+
+        if (!$validationResult['valid']) {
+            throw new \Exception($validationResult['error']);
+        }
+
+        if (!empty($data['password'])) {
+            $data['password'] = Crypt::encryptString($data['password']);
+        } else {
+            unset($data['password']); // Don't overwrite with null/empty
+        }
+
+        $oldValues = $server->toArray();
+
+        $server->update([
+            ...$data,
+            'updated_at' => now(),
+        ]);
+
+        // Audit Log
+        $this->auditLogService->create([
+            'entity_name' => 'MailServer',
+            'entity_id' => $server->id,
+            'new_values' => $server->fresh()->toArray(),
+            'old_values' => $oldValues,
+            'is_update' => true,
+            'organization_id' => $orgId,
+        ], 'Outgoing Mail Server Updated');
+
+        return $server;
+    }
+
+    public function getOutgoingServer($serverId, $orgId)
+    {
+        $server = MailServer::where('id', $serverId)
+            ->where('organization_id', $orgId)
+            ->where('deleted', 0)
+            ->first();
+
+        if (!$server) {
+            throw new \Exception('Outgoing server not found.');
+        }
+
+        return $server;
+    }
 
 	public function deleteServer($serverId, $orgId)
 	{
@@ -80,24 +192,34 @@ class MailService{
 		return true;
 	}
 
-	public function setOutgoingServer($serverId, $orgId)
+	public function setOutgoingServer(string $serverId, string $orgId)
 	{
-		// Disable all smtp for this org
+		// 1️⃣ Check server exists & belongs to org
+		$server = MailServer::where('id', $serverId)
+			->where('organization_id', $orgId)
+			->where('mail_type', 'smtp')
+			->where('deleted', 0)
+			->first();
+
+		if (!$server) {
+			throw new \Exception('SMTP server not found or invalid');
+		}
+
+		// 2️⃣ Disable all outgoing servers for org
 		MailServer::where('organization_id', $orgId)
 			->where('mail_type', 'smtp')
 			->where('deleted', 0)
 			->update(['is_active' => 0]);
 
-		// Enable selected server
-		return MailServer::where('id', $serverId)
-			->where('organization_id', $orgId)
-			->where('deleted', 0)
-			->update([
-				'is_active' => 1,
-				'updated_at' => now()
-			]);
-	}
+		// 3️⃣ Enable selected server
+		$server->update([
+			'is_active'  => 1,
+			'updated_at' => now()
+		]);
 
+		return true;
+	}
+	
 	public function connectServer($serverId, $orgId)
 	{
 		$server = MailServer::where('id', $serverId)->where('organization_id', $orgId)->where('deleted', 0)->first();
@@ -119,7 +241,42 @@ class MailService{
 			return ['status' => 'failed', 'error' => $e->getMessage()];
 		}
 	}
+	private function validateImapCredentials(
+		string $host,
+		int $port,
+		string $username,
+		string $password,
+		string $encryption,
+		string $folder
+	): array {
+		try {
+			$flags = '/imap';
 
+			if ($encryption === 'ssl') {
+				$flags .= '/ssl';
+			} elseif ($encryption === 'tls') {
+				$flags .= '/tls';
+			}
+
+			$mailbox = sprintf('{%s:%d%s}%s', $host, $port, $flags, $folder);
+
+			$connection = @imap_open($mailbox, $username, $password, OP_HALFOPEN, 1);
+
+			if (!$connection) {
+				throw new \Exception(imap_last_error() ?: 'IMAP authentication failed');
+			}
+
+			imap_close($connection);
+
+			return ['valid' => true];
+
+		} catch (\Throwable $e) {
+			return [
+				'valid' => false,
+				'error' => 'IMAP validation failed: ' . $e->getMessage()
+			];
+		}
+	}
 	private function validateSmtpCredentials($host, $port, $username, $password, $encryption, $fromEmail)
 	{
 		try {
@@ -145,10 +302,26 @@ class MailService{
 
 			return ['valid' => true];
 		} catch (\Exception $e) {
-			return [
-				'valid' => false,
-				'error' => 'SMTP validation failed: ' . $e->getMessage()
-			];
+                    $msg = $e->getMessage();
+
+        // ✅ Make message short for frontend
+        if (str_contains($msg, '535')) {
+            $short = "SMTP authentication failed. Username or password is incorrect.";
+        } elseif (str_contains($msg, 'Connection could not be established')) {
+            $short = "SMTP connection failed. Please check host/port/encryption.";
+        } elseif (str_contains($msg, 'Could not resolve host')) {
+            $short = "SMTP host is invalid. Please check the host name.";
+        } else {
+            $short = "SMTP validation failed. Please verify server settings.";
+        }
+
+        // (Optional) log full error for debugging
+        \Log::error("SMTP validation error: " . $msg);
+
+        return [
+            'valid' => false,
+            'error' => $short
+        ];
 		}
 	}
 
@@ -194,10 +367,22 @@ class MailService{
            
 			$bodyWithPixel = $data['body'] . $pixelHtml;
 
-			// Send mail
-			Mail::to($data['to'])->send(
-				new GenericMail($data['subject'], $bodyWithPixel)
-			);
+            // Send mail
+            $mailable = new GenericMail($data['subject'], $bodyWithPixel);
+            
+            // Attachments for Mailable
+            if (!empty($data['attachments'])) {
+                foreach ($data['attachments'] as $attachment) {
+                    if (is_array($attachment) && isset($attachment['path'])) {
+                        $mailable->attach($attachment['path'], [
+                            'as' => $attachment['name'] ?? basename($attachment['path']),
+                            'mime' => $attachment['mime_type'] ?? null,
+                        ]);
+                    }
+                }
+            }
+
+            Mail::to($data['to'])->send($mailable);
 
 			// Log success
 			$mailLog = $this->createLog(
@@ -222,8 +407,20 @@ class MailService{
 				null,
 				null,
 				null,
-				$trackingToken
+                $data['references'] ?? null,
+                null, // thread_id
+                $trackingToken,
+                $data['folder_id'] ?? null
 			);
+
+            // Handle Attachments (Save to DB)
+            if (!empty($data['attachments'])) {
+                foreach ($data['attachments'] as $attachment) {
+                     if (is_array($attachment) && isset($attachment['path'])) {
+                         $this->saveAttachment($mailLog->id, $orgId, $attachment);
+                    }
+                }
+            }
 
 			// Create mail relation if module and recordId provided
 			if ($module && $recordId) {
@@ -285,273 +482,367 @@ class MailService{
 			'mail.from.name' => $server->from_name,
 		]);
 	}
-	public function saveImapServer(array $data)
-{
-    // check SMTP server exists for this org
-    $exists = MailServer::where('id', $data['mail_server_id'])
-        ->where('organization_id', $data['organization_id'])
-        ->where('deleted', 0)
-        ->exists();
+    public function createImapServer(array $data)
+    {
+        // Check duplicates
+        $exists = MailImapServer::where('organization_id', $data['organization_id'])
+            ->where('username', $data['username'])
+            ->where('deleted', 0)
+            ->exists();
 
-    if (!$exists) {
-        throw new \Exception('Invalid mail server');
-    }
+        if ($exists) {
+            throw new \Exception('IMAP server with this username already exists.');
+        }
 
-    // encrypt password
-    if (!empty($data['password'])) {
-        $data['password'] = Crypt::encryptString($data['password']);
-    }
+        $validation = $this->validateImapCredentials(
+            $data['host'],
+            $data['port'],
+            $data['username'],
+            $data['password'],
+            $data['encryption'],
+            $data['folder'] ?? 'INBOX'
+        );
 
-    // update if already exists for this server
-    $imap = MailImapServer::where('organization_id', $data['organization_id'])
-        ->where('mail_server_id', $data['mail_server_id'])
-        ->where('deleted', 0)
-        ->first();
+        if (!$validation['valid']) {
+            throw new \Exception($validation['error']);
+        }
 
-    if ($imap) {
-        $imap->update([
-            'host'       => $data['host'],
-            'port'       => $data['port'],
-            'encryption' => $data['encryption'],
-            'username'   => $data['username'],
-            'password'   => $data['password'] ?? $imap->password,
-            'folder'     => $data['folder'] ?? 'INBOX',
-            'updated_at' => now(),
+        // encrypt password
+        if (!empty($data['password'])) {
+            $data['password'] = Crypt::encryptString($data['password']);
+        }
+
+        $imapServer = MailImapServer::create([
+            'id'              => (string) Str::uuid(),
+            'organization_id' => $data['organization_id'],
+            'mail_server_id'  => $data['mail_server_id'] ?? null,
+            'created_by'      => $data['created_by'],
+            'host'            => $data['host'],
+            'port'            => $data['port'],
+            'encryption'      => $data['encryption'],
+            'username'        => $data['username'],
+            'password'        => $data['password'],
+            'folder'          => $data['folder'] ?? 'INBOX',
+            'created_at'      => now(),
+            'deleted'         => 0,
         ]);
 
-        return $imap;
+        // Audit Log
+        $this->auditLogService->create([
+            'entity_name' => 'MailImapServer',
+            'entity_id' => $imapServer->id,
+            'new_values' => $imapServer->toArray(),
+            'old_values' => [],
+            'organization_id' => $data['organization_id'],
+        ], 'Incoming Mail Server Created');
+
+        return $imapServer;
     }
 
-    // create new
-    return MailImapServer::create([
-        'id'              => (string) Str::uuid(),
-        'organization_id' => $data['organization_id'],
-        'mail_server_id'  => $data['mail_server_id'],
-        'created_by'      => $data['created_by'],
-        'host'            => $data['host'],
-        'port'            => $data['port'],
-        'encryption'      => $data['encryption'],
-        'username'        => $data['username'],
-        'password'        => $data['password'],
-        'folder'          => $data['folder'] ?? 'INBOX',
-        'created_at'      => now(),
-        'deleted'         => 0,
-    ]);
-}
-	private function getImapServer(string $id)
+    public function updateImapServer($id, array $data)
+    {
+        $imap = MailImapServer::where('id', $id)
+            ->where('organization_id', $data['organization_id'])
+            ->where('deleted', 0)
+            ->first();
+
+        if (!$imap) {
+            throw new \Exception('IMAP server not found.');
+        }
+
+        // Prepare credentials for validation
+        $host = $data['host'] ?? $imap->host;
+        $port = $data['port'] ?? $imap->port;
+        $username = $data['username'] ?? $imap->username;
+        $encryption = $data['encryption'] ?? $imap->encryption;
+        $folder = $data['folder'] ?? ($imap->folder ?? 'INBOX');
+        
+        $password = $data['password'] ?? null;
+        if (empty($password)) {
+             try {
+                $decryptedPassword = Crypt::decryptString($imap->password);
+             } catch (\Exception $e) {
+                // If existing password is messed up, we might fail validation if we rely on it.
+                // Fallback to raw if possible or assume user must provide new password if validation fails?
+                // For now, assume decrypt works.
+                $decryptedPassword = $imap->password; 
+             }
+             $passwordToValidate = $decryptedPassword;
+        } else {
+             $passwordToValidate = $password;
+        }
+
+        $validation = $this->validateImapCredentials(
+            $host,
+            $port,
+            $username,
+            $passwordToValidate,
+            $encryption,
+            $folder
+        );
+
+        if (!$validation['valid']) {
+            throw new \Exception($validation['error']);
+        }
+
+        if (!empty($data['password'])) {
+            $data['password'] = Crypt::encryptString($data['password']);
+        } else {
+            unset($data['password']);
+        }
+
+        $oldValues = $imap->toArray();
+
+        $imap->update([
+            'host'       => $host,
+            'port'       => $port,
+            'encryption' => $encryption,
+            'username'   => $username,
+            'folder'     => $folder,
+            ...$data, // includes password if set
+            'updated_at' => now(),
+        ]);
+        
+        // Audit Log
+        $this->auditLogService->create([
+            'entity_name' => 'MailImapServer',
+            'entity_id' => $imap->id,
+            'new_values' => $imap->fresh()->toArray(),
+            'old_values' => $oldValues,
+            'is_update' => true,
+            'organization_id' => $data['organization_id'],
+        ], 'Incoming Mail Server Updated');
+        
+        return $imap;
+    }
+    public function getImapServer($serverId, $orgId)
+    {
+        $server = MailImapServer::where('id', $serverId)
+            ->where('organization_id', $orgId)
+            ->where('deleted', 0)
+            ->first();
+
+        if (!$server) {
+            throw new \Exception('IMAP server not found.');
+        }
+
+        return $server;
+    }
+
+	private function getImapServerOrFail($id)
 	{
-		
-    return MailImapServer::where('id', $id)
-        ->where('organization_id', auth()->user()->organization_id)
-        ->where('deleted', 0)
-        ->firstOrFail();
-	
+		$server = MailImapServer::where('id', $id)
+			->where('organization_id', auth()->user()->organization_id)
+			->where('deleted', 0)
+			->first();
+
+		if (!$server) {
+			throw new \Exception('IMAP server not found or access denied');
+		}
+		if (!$server->is_active) {
+			throw new \Exception('IMAP server is inactive');
+		}
+
+		return $server;
 	}
 	public function connectImap(string $imapServerId): bool
 	{
-			$server = $this->getImapServer($imapServerId);
+		$server = $this->getImapServerOrFail($imapServerId);
 
-			$this->openImapConnection($server);
+		$this->openImapConnection($server);
 
-			return true;
-		}
+		return true;
+	}
 
 	private function openImapConnection($server)
-{
-	
-    if (
-        !$server->host ||
-        !$server->port ||
-        !$server->username ||
-        !$server->password
-    ) {
-        throw new \Exception('IMAP credentials not configured');
-    }
-	
+	{
+		if (!$server->host || !$server->port || !$server->username || !$server->password ) {
+			throw new \Exception('IMAP credentials not configured');
+		}
 
-    $mailbox = sprintf(
-        '{%s:%s/imap/%s}%s',
-        $server->host,
-        $server->port,
-        strtolower($server->encryption ?? 'ssl'),
-        $server->folder ?? 'INBOX'
-    );
+		$mailbox = sprintf(
+			'{%s:%s/imap/%s}%s',
+			$server->host,
+			$server->port,
+			strtolower($server->encryption ?? 'ssl'),
+			$server->folder ?? 'INBOX'
+		);
 
-    $password = \Crypt::decryptString($server->password);
+		$password = \Crypt::decryptString($server->password);
 
-    $imap = @imap_open($mailbox, $server->username, $password);
+		$imap = @imap_open($mailbox, $server->username, $password);
 
-    if (!$imap) {
-        throw new \Exception(imap_last_error());
-    }
+		if (!$imap) {
+			throw new \Exception(imap_last_error());
+		}
 
-    return $imap;
-}
-public function fetchImapInbox(string $imapServerId, int $limit = 20): array
-{
-    $server = $this->getImapServer($imapServerId);
-    $imap = $this->openImapConnection($server);
+		return $imap;
+	}
+	public function fetchImapInbox(string $imapServerId, int $limit = 20): array
+	{
+		$server = $this->getImapServerOrFail($imapServerId);
+		$imap = $this->openImapConnection($server);
 
-    $lastUid = $server->last_uid ?? 0;
-    \Log::info("IMAP Sync Start", ['server_id' => $imapServerId, 'last_uid' => $lastUid]);
-    
-    $syncedCount = 0;
-    
-    // 1. FORWARD SYNC: Try to get new emails since last sync UID
-    $newMsgNos = [];
-    if ($lastUid == 0) {
-        $total = imap_num_msg($imap);
-        // Identify the range of LATEST emails, e.g. 81-100
-        if ($total > 0) {
-            $start = max(1, $total - $limit + 1);
-            $newMsgNos = range($start, $total); // Ascending order: 81, 82 ... 100
-        }
-    } else {
-        $nextUid = $lastUid + 1;
-        $newMsgNos = imap_search($imap, "UID $nextUid:*") ?: [];
-        sort($newMsgNos); // Ensure Ascending
-    }
+		$lastUid = $server->last_uid ?? 0;
+		\Log::info("IMAP Sync Start", ['server_id' => $imapServerId, 'last_uid' => $lastUid]);
 
-    $highestUid = $lastUid;
-   // dd($imap,$newMsgNos,$lastUid,'mails');
-    foreach ($newMsgNos as $msgNo) {
-        $uid = imap_uid($imap, $msgNo);
-        if (!$uid || $uid <= $lastUid) continue;
-        if ($uid > $highestUid) $highestUid = $uid;
+		$syncedCount = 0;
 
-        if ($this->syncEmail($imap, $server, $uid)) {
-            $syncedCount++;
-        }
-        
-        if ($syncedCount >= $limit) break;
-    }
+		// 1. FORWARD SYNC: Try to get new emails since last sync UID
+		$newMsgNos = [];
+		if ($lastUid == 0) {
+			$total = imap_num_msg($imap);
+			// Identify the range of LATEST emails, e.g. 81-100
+			if ($total > 0) {
+				$start = max(1, $total - $limit + 1);
+				$newMsgNos = range($start, $total); // Ascending order: 81, 82 ... 100
+			}
+		} else {
+			$nextUid = $lastUid + 1;
+			$newMsgNos = imap_search($imap, "UID $nextUid:*") ?: [];
+			sort($newMsgNos); // Ensure Ascending
+		}
 
-    // 2. BACKWARD SYNC: If we haven't reached the limit with NEW emails, fetch OLD history
-    if ($syncedCount < $limit) {
-        $lowestUidInDb = MailLog::where('mail_server_id', $server->id)
-            ->where('direction', 'incoming')
-            ->whereNotNull('imap_uid')
-            ->where('deleted', 0)
-            ->min('imap_uid');
+		$highestUid = $lastUid;
+		// dd($imap,$newMsgNos,$lastUid,'mails');
+		foreach ($newMsgNos as $msgNo) {
+			$uid = imap_uid($imap, $msgNo);
+			if (!$uid || $uid <= $lastUid) continue;
+			if ($uid > $highestUid) $highestUid = $uid;
 
-        if ($lowestUidInDb && $lowestUidInDb > 1) {
-            $msgNo = imap_msgno($imap, $lowestUidInDb);
-            if ($msgNo > 1) {
-                // We want to fetch the block BEFORE the current lowest.
-                // e.g. current lowest is 81. We want 20 before that: 61 to 80.
-                // But we must PROCESS them 61->80 (Ascending).
-                
-                $endMsgNo = $msgNo - 1; // 80
-                $needed = $limit - $syncedCount;
-                $startMsgNo = max(1, $endMsgNo - $needed + 1); // 61
-                
-                \Log::info("IMAP Backfilling history", ['server_id' => $imapServerId, 'start_msg_no' => $startMsgNo, 'end_msg_no' => $endMsgNo]);
-                
-                // Loop Ascending
-                for ($m = $startMsgNo; $m <= $endMsgNo; $m++) {
-                    $uid = imap_uid($imap, $m);
-                    if ($uid && $this->syncEmail($imap, $server, $uid)) {
-                        $syncedCount++;
-                    }
-                }
-            }
-        }
-    }
+			if ($this->syncEmail($imap, $server, $uid)) {
+				$syncedCount++;
+			}
 
-    imap_close($imap);
+			if ($syncedCount >= $limit) break;
+		}
 
-    if ($highestUid > $lastUid) {
-        $server->update([
-            'last_uid' => $highestUid,
-            'last_sync_at' => now()
-        ]);
-    }
+		// 2. BACKWARD SYNC: If we haven't reached the limit with NEW emails, fetch OLD history
+		if ($syncedCount < $limit) {
+			$lowestUidInDb = MailLog::where('mail_server_id', $server->id)
+				->where('direction', 'incoming')
+				->whereNotNull('imap_uid')
+				->where('deleted', 0)
+				->min('imap_uid');
 
-    \Log::info("IMAP Sync Finished", ['server_id' => $imapServerId, 'newly_synced' => $syncedCount]);
+			if ($lowestUidInDb && $lowestUidInDb > 1) {
+				$msgNo = imap_msgno($imap, $lowestUidInDb);
+				if ($msgNo > 1) {
+					// We want to fetch the block BEFORE the current lowest.
+					// e.g. current lowest is 81. We want 20 before that: 61 to 80.
+					// But we must PROCESS them 61->80 (Ascending).
 
-    // 3. FETCH ALL EMAILS AND GROUP BY THREADS
-    $allMails = MailLog::where('mail_server_id', $server->id)
-        ->where('direction', 'incoming')
-        ->where('deleted', 0)
-        ->orderBy('created_at', 'desc')
-        ->limit(100)
-        ->get();
+					$endMsgNo = $msgNo - 1; // 80
+					$needed = $limit - $syncedCount;
+					$startMsgNo = max(1, $endMsgNo - $needed + 1); // 61
 
-    // Group emails by thread_id
-    $threads = [];
-    $threadsMap = [];
+					\Log::info("IMAP Backfilling history", ['server_id' => $imapServerId, 'start_msg_no' => $startMsgNo, 'end_msg_no' => $endMsgNo]);
 
-    foreach ($allMails as $mail) {
-        $threadId = $mail->thread_id;
-        
-        if (!isset($threadsMap[$threadId])) {
-            $threadsMap[$threadId] = [
-                'thread_id' => $threadId,
-                'subject' => $mail->subject,
-                'participants' => [],
-                'last_message_date' => $mail->created_at,
-                'unread_count' => 0,
-                'message_count' => 0,
-                'messages' => []
-            ];
-        }
+					// Loop Ascending
+					for ($m = $startMsgNo; $m <= $endMsgNo; $m++) {
+						$uid = imap_uid($imap, $m);
+						if ($uid && $this->syncEmail($imap, $server, $uid)) {
+							$syncedCount++;
+						}
+					}
+				}
+			}
+		}
 
-        // Add message to thread
-        $threadsMap[$threadId]['messages'][] = [
-            'id' => $mail->id,
-            'from' => $mail->from_email,
-            'to' => $mail->to_email,
-            'subject' => $mail->subject,
-            'body' => $mail->body,
-            'body_preview' => strip_tags(substr($mail->body, 0, 200)),
-            'date' => $mail->created_at->toDateTimeString(),
-            'is_read' => $mail->is_read,
-            'imap_uid' => $mail->imap_uid,
-            'message_id' => $mail->message_id
-        ];
+		imap_close($imap);
 
-        // Update thread metadata
-        $threadsMap[$threadId]['message_count']++;
-        if (!$mail->is_read) {
-            $threadsMap[$threadId]['unread_count']++;
-        }
+		if ($highestUid > $lastUid) {
+			$server->update([
+				'last_uid' => $highestUid,
+				'last_sync_at' => now()
+			]);
+		}
 
-        // Track participants
-        if (!in_array($mail->from_email, $threadsMap[$threadId]['participants'])) {
-            $threadsMap[$threadId]['participants'][] = $mail->from_email;
-        }
-        if ($mail->to_email && !in_array($mail->to_email, $threadsMap[$threadId]['participants'])) {
-            $threadsMap[$threadId]['participants'][] = $mail->to_email;
-        }
+		\Log::info("IMAP Sync Finished", ['server_id' => $imapServerId, 'newly_synced' => $syncedCount]);
 
-        // Update last message date (most recent)
-        if ($mail->created_at > $threadsMap[$threadId]['last_message_date']) {
-            $threadsMap[$threadId]['last_message_date'] = $mail->created_at;
-        }
-    }
+		// 3. FETCH ALL EMAILS AND GROUP BY THREADS
+		$allMails = MailLog::where('mail_server_id', $server->id)
+			->where('direction', 'incoming')
+			->where('deleted', 0)
+			->orderBy('created_at', 'desc')
+			->limit(100)
+			->get();
 
-    // Sort messages within each thread by date (ascending for chat-like display)
-    foreach ($threadsMap as &$thread) {
-        usort($thread['messages'], function($a, $b) {
-            return strtotime($a['date']) - strtotime($b['date']);
-        });
-        
-        // Convert last_message_date to string
-        $thread['last_message_date'] = $thread['last_message_date']->toDateTimeString();
-    }
+		// Group emails by thread_id
+		$threads = [];
+		$threadsMap = [];
 
-    // Convert to array and sort threads by last message date (descending)
-    $threads = array_values($threadsMap);
-    usort($threads, function($a, $b) {
-        return strtotime($b['last_message_date']) - strtotime($a['last_message_date']);
-    });
+		foreach ($allMails as $mail) {
+			$threadId = $mail->thread_id;
 
-    return $threads;
-}
+			if (!isset($threadsMap[$threadId])) {
+				$threadsMap[$threadId] = [
+					'thread_id' => $threadId,
+					'subject' => $mail->subject,
+					'participants' => [],
+					'last_message_date' => $mail->created_at,
+					'unread_count' => 0,
+					'message_count' => 0,
+					'messages' => []
+				];
+			}
+
+			// Add message to thread
+			$threadsMap[$threadId]['messages'][] = [
+				'id' => $mail->id,
+				'from' => $mail->from_email,
+				'to' => $mail->to_email,
+				'subject' => $mail->subject,
+				'body' => $mail->body,
+				'body_preview' => strip_tags(substr($mail->body, 0, 200)),
+				'date' => $mail->created_at->toDateTimeString(),
+				'is_read' => $mail->is_read,
+				'imap_uid' => $mail->imap_uid,
+				'message_id' => $mail->message_id
+			];
+
+			// Update thread metadata
+			$threadsMap[$threadId]['message_count']++;
+			if (!$mail->is_read) {
+				$threadsMap[$threadId]['unread_count']++;
+			}
+
+			// Track participants
+			if (!in_array($mail->from_email, $threadsMap[$threadId]['participants'])) {
+				$threadsMap[$threadId]['participants'][] = $mail->from_email;
+			}
+			if ($mail->to_email && !in_array($mail->to_email, $threadsMap[$threadId]['participants'])) {
+				$threadsMap[$threadId]['participants'][] = $mail->to_email;
+			}
+
+			// Update last message date (most recent)
+			if ($mail->created_at > $threadsMap[$threadId]['last_message_date']) {
+				$threadsMap[$threadId]['last_message_date'] = $mail->created_at;
+			}
+		}
+
+		// Sort messages within each thread by date (ascending for chat-like display)
+		foreach ($threadsMap as &$thread) {
+			usort($thread['messages'], function($a, $b) {
+				return strtotime($a['date']) - strtotime($b['date']);
+			});
+
+			// Convert last_message_date to string
+			$thread['last_message_date'] = $thread['last_message_date']->toDateTimeString();
+		}
+
+		// Convert to array and sort threads by last message date (descending)
+		$threads = array_values($threadsMap);
+		usort($threads, function($a, $b) {
+			return strtotime($b['last_message_date']) - strtotime($a['last_message_date']);
+		});
+
+		return $threads;
+	}
 
 public function searchMails(string $imapServerId, array $filters): array
 {
-    $server = $this->getImapServer($imapServerId);
+    $server = $this->getImapServerOrFail($imapServerId);
     
     $query = MailLog::where('mail_server_id', $server->id)
         ->where('direction', 'incoming')
@@ -620,7 +911,7 @@ public function recordOpen(string $token): void
 
 public function getThreadMails(string $imapServerId, string $threadId): array
 {
-    $server = $this->getImapServer($imapServerId);
+    $server = $this->getImapServerOrFail($imapServerId);
 
     return MailLog::where('mail_server_id', $server->id)
         ->where('thread_id', $threadId)
@@ -854,7 +1145,7 @@ private function syncEmail($imap, $server, $uid)
     }
 
 
-	private function createLog($orgId, $serverId, $userId, $direction, $to, $from, $subject, $status, $error = null, array $info = null, $body = null, $imapUid = null, $isRead = 0, $messageId = null, $inReplyTo = null, $references = null, $threadId = null, $trackingToken = null) {
+    private function createLog($orgId, $serverId, $userId, $direction, $to, $from, $subject, $status, $error = null, array $info = null, $body = null, $imapUid = null, $isRead = 0, $messageId = null, $inReplyTo = null, $references = null, $threadId = null, $trackingToken = null, $folderId = null) {
 		return MailLog::create([
 			'id' => (string) Str::uuid(),
 			'organization_id' => $orgId,
@@ -870,6 +1161,7 @@ private function syncEmail($imap, $server, $uid)
             'in_reply_to' => $inReplyTo,
             'references' => $references,
             'thread_id' => $threadId,
+            'folder_id' => $folderId,
             'tracking_token' => $trackingToken,
 			'is_read' => $isRead,
 			'status' => $status,

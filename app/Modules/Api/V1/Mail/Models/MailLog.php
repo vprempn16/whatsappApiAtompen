@@ -28,6 +28,11 @@ class MailLog extends Model
         'in_reply_to',
         'references',
         'thread_id',
+        'folder_id',      // New
+        'is_starred',     // New
+        'is_archived',    // New
+        'trashed_at',     // New
+        'archived_at',    // New
         'opened_at',
         'tracking_token',
         'is_read',
@@ -38,6 +43,26 @@ class MailLog extends Model
         'updated_at',
         'deleted'
     ];
+
+    public function folder()
+    {
+        return $this->belongsTo(\App\Modules\Api\V1\Mailbox\Models\MailboxFolder::class, 'folder_id');
+    }
+
+    public function labels()
+    {
+        return $this->belongsToMany(
+            \App\Modules\Api\V1\Mailbox\Models\MailLabel::class,
+            'mail_email_labels',
+            'mail_log_id',
+            'label_id'
+        );
+    }
+
+    public function attachments()
+    {
+        return $this->hasMany(\App\Modules\Api\V1\Mailbox\Models\MailAttachment::class, 'mail_log_id');
+    }
 
     protected static function boot()
     {

@@ -23,6 +23,7 @@ class MailRelation extends Model
         'deleted'
     ];
 
+    
     protected static function boot()
     {
         parent::boot();

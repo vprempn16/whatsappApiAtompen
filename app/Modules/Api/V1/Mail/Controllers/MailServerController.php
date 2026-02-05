@@ -9,6 +9,7 @@ use App\Models\FieldModelManager;
 use App\Http\Controllers\ApiController;
 use App\Traits\ResultTrait;
 use App\Services\Mail\MailService;
+use Illuminate\Support\Facades\Validator;
 class MailServerController extends Controller
 {
     use ResultTrait;
@@ -51,13 +52,98 @@ class MailServerController extends Controller
             return $this->error('Organization not found');
         }
 
-        $data = $request->all();
+        $values = $request->input('data.values');
+
+        if (!$values) {
+            return $this->error('Invalid payload structure');
+        }
+       
+
+        $validator = Validator::make($values, [
+            'username'   => 'required|string|max:100',
+            'password'   => 'required|string',
+            'host'       => 'required|string',
+            'port'       => 'required|integer',
+            'encryption' => 'required|string|in:ssl,tls',
+            'from_email' => 'required|email',
+            'from_name' => 'required|string',
+            'mail_type' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            $message = collect($validator->errors()->all())->implode(',');
+            return $this->error($message);
+        }
+
+        
+        $data = $validator->validated();
         $data['organization_id'] = $orgId;
         $data['created_by'] = $userId;
+        $data['from_name'] = $data['from_name'];
+        $data['mail_type'] = $data['mail_type'];
+        
+        try {
+            $server = $this->service->createOutgoingServer($data);
+            return $this->success($server, 'Mail server created successfully');
+        } catch (\Exception $e) {
+            return $this->error($e->getMessage());
+        }
+    }
+
+    public function update($id, Request $request)
+    {
+        $orgId = auth()->user()->organization_id;
+
+        if (!$orgId) {
+            return $this->error('Organization not found');
+        }
+
+        $values = $request->input('data.values'); // Consistent payload
+
+        if (!$values) {
+            return $this->error('Invalid payload structure');
+        }
+
+        $validator = Validator::make($values, [
+            'username'   => 'required|string|max:100',
+            'password'   => 'required|string', // Optional on update
+            'host'       => 'required|string',
+            'port'       => 'required|integer',
+            'encryption' => 'required|string|in:ssl,tls',
+            'from_email' => 'required|email',
+            'from_name' => 'required|string',
+            'mail_type' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            $message = collect($validator->errors()->all())->implode(',');
+            return $this->error($message);
+        }
+
+        $data = $validator->validated();
+        $data['organization_id'] = $orgId;
+        $data['from_name'] = $values['from_name'];
+        $data['mail_type'] = $values['mail_type'];
 
         try {
-            $server = $this->service->saveServer($data);
-            return $this->success($server, 'Mail server saved successfully');
+            $server = $this->service->updateOutgoingServer($id, $data);
+            return $this->success($server, 'Mail server updated successfully');
+        } catch (\Exception $e) {
+            return $this->error($e->getMessage());
+        }
+    }
+
+    public function show($id)
+    {
+        $orgId = auth()->user()->organization_id;
+
+        if (!$orgId) {
+            return $this->error('Organization not found');
+        }
+
+        try {
+            $server = $this->service->getOutgoingServer($id, $orgId);
+            return $this->success($server, 'Mail server details fetched');
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -82,16 +168,20 @@ class MailServerController extends Controller
 
     public function setOutgoing($id)
     {
-        $orgId = auth()->user()->organization_id;
+	    $orgId = auth()->user()->organization_id;
 
-        if (!$orgId) {
-            return $this->error('Organization not found');
-        }
+	    if (!$orgId) {
+		    return $this->error('Organization not found');
+	    }
 
-        $this->service->setOutgoingServer($id, $orgId);
-
-        return $this->success([], 'Outgoing server configured');
+	    try {
+		    $this->service->setOutgoingServer($id, $orgId);
+		    return $this->success([], 'Outgoing server configured');
+	    } catch (\Exception $e) {
+		    return $this->error($e->getMessage());
+	    }
     }
+    
 
     public function connect($id)
     {

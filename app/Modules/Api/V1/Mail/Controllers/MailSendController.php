@@ -75,67 +75,17 @@ class MailSendController extends Controller
             return $this->error('Recipients are required');
         }
 
+        // Use MailboxService to handle complex recipient resolution and sending
+        // Note: We need MailboxService instance. MailSendController currently only has MailService.
+        // We can resolve it from container.
+        
+        $mailboxService = app(\App\Services\Mail\MailboxService::class);
+        
         try {
-            $record = \App\Services\CRM\RecordObject::make($module, $recordId);
+            $results = $mailboxService->processAndSendComplexRecipients($values, $orgId, $userId);
+            return $this->success(['values' => $results], 'Emails processed');
         } catch (\Throwable $e) {
             return $this->error($e->getMessage());
         }
-
-        if (!$record) {
-            return $this->error('Record not found');
-        }
-
-        $results = [];
-
-	foreach ($values['recipients'] as $fieldName) {
-		$crmField = DB::table('crm_fields')
-			->where('modulename', $module)
-			->where('apifieldname', $fieldName)
-			->first('fieldname');
-
-		if(!$crmField){
-			$results[] = [
-				'crm_field' => $fieldName,
-				'success'   => false,
-				'error'     => "Field Name {$fieldName} not found"
-			];
-			continue;
-		}
-		$fieldName = $crmField->fieldname;
-            $to = $record->{$fieldName} ?? null;
-
-            if (!$to) {
-                $results[] = [
-                    'recipient_field' => $fieldName,
-                    'to' => null,
-                    'success' => false,
-                    'error' => 'Recipient email not found'
-                ];
-                continue;
-            }
-
-            $mailData = [
-                'server_id' => $values['server_id'],
-                'to' => $to,
-                'subject' => $values['subject'] ?? 'No Subject',
-                'body' => $values['body'] ?? '',
-                'cc' => $values['cc'] ?? [],
-                'bcc' => $values['bcc'] ?? []
-            ];
-
-            $result = $this->service->sendMail($mailData, $module, $recordId);
-
-            $results[] = [
-                'recipient_field' => $fieldName,
-                'to' => $to,
-                'success' => $result['status'] ?? false,
-                'response' => $result['status'] ? $result['data'] : null,
-                'error' => $result['status'] ? null : ($result['error'] ?? 'Mail failed')
-            ];
-        }
-
-        return $this->success([
-            'values' => $results
-        ], 'Emails processed');
     }
 }
