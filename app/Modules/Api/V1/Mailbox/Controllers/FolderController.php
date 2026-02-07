@@ -30,6 +30,41 @@ class FolderController extends Controller
         return $this->success($folders, 'Folders retrieved');
     }
 
+    public function sync(Request $request) 
+    {
+        //dd($request->all());
+        $orgId = auth()->user()->organization_id;
+        $userId = auth()->id();
+
+        $values = $request->input('data.values');
+        if (!$values) {
+            $values = $request->all();
+        }
+
+        $validator = Validator::make($values, [
+            'mail_server_id' => 'required|uuid',
+            'type' => 'nullable|string|in:Folder,Label'
+        ]);
+
+        if ($validator->fails()) {
+            return $this->error($validator->errors()->first());
+        }
+
+        $data = $validator->validated();
+        
+        try {
+            $result = $this->mailboxService->syncMailboxStructure(
+                $data['mail_server_id'],
+                $orgId,
+                $userId,
+                $data['type'] ?? 'Folder'
+            );
+            return $this->success($result, 'Mailbox structure synced successfully');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage());
+        }
+    }
+
     public function store(Request $request)
     {
         $orgId = auth()->user()->organization_id;

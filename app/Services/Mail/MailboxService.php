@@ -521,132 +521,313 @@ class MailboxService
 
     // --- Complex Recipient Processing & Sending ---
 
+ 
+
     public function processAndSendComplexRecipients(array $data, string $orgId, string $userId)
     {
-        $recipients = $data['recipients'] ?? [];
-        $results = [];
-      
-        foreach ($recipients as $item) {
-            $to = null;
-            $fieldName = $item['field'] ?? 'Unknown Field';
-            // Handle typos/variations as per requirement
-            $module = $item['module_nam'] ?? $item['module_name'] ?? null; 
-            $recordId = $item['recotdI'] ?? $item['record_id'] ?? $item['recordId'] ?? null; 
+	    $recipients = $data['recipients'] ?? [];
+	    $results = [];
 
-            $error = null;
+	    foreach ($recipients as $item) {
+		    $to = null;
+		    $fieldName = $item['field'] ?? 'Unknown Field';
+		    // Handle typos/variations as per requirement
+		    $module = $item['module_nam'] ?? $item['module_name'] ?? null; 
+		    $recordId = $item['recotdI'] ?? $item['record_id'] ?? $item['recordId'] ?? null; 
 
-            // 1. Validation of Context
-            if (!$module || !$recordId) {
-               $error = "Missing module or record ID";
-            } else {
-                 // 2. Resolve
-                 $modelClass = "App\\Modules\\Api\\V1\\" . ucfirst($module) . "\\Models\\" . ucfirst($module);
-                 if (!class_exists($modelClass)) {
-                     $modelClass = "App\\Models\\" . ucfirst($module);
-                 }
+		    $error = null;
 
-                 if (class_exists($modelClass)) {
-                     $record = $modelClass::find($recordId);
-                     // The user snippet uses direct fetch.
-                     if ($record) {
-                         // Check Org Access if model has checking? 
-                         // Assuming standard multitenant
-                         if (isset($record->organization_id) && $record->organization_id != $orgId) {
-                             $error = "Record access denied";
-                         } else {
-                             // Field lookup
-                             $fieldVal = $item['field'] ?? null;
-                             if ($fieldVal) {
-                                 $crmField = DB::table('crm_fields')
-                                    ->where('modulename', $module)
-                                    ->where('apifieldname', $fieldVal)
-                                    ->first('fieldname');
-                                 
-                                 $realFieldName = $crmField ? $crmField->fieldname : $fieldVal;
-                                 
-                                 $to = $record->{$realFieldName} ?? null;
-                                 
-                                 if (!$to) {
-                                     $error = "No email address found in field '$fieldVal'";
-                                 } elseif (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
-                                     $error = "Invalid email format: '$to'";
-                                 }
-                             } else {
-                                 $error = "Field name not provided";
-                             }
-                         }
-                     } else {
-                         $error = "Record not found";
-                     }
-                 } else {
-                     $error = "Module $module not found";
-                 }
+		    // 1. Validation of Context
+		    if (!$module || !$recordId) {
+			    $error = "Missing module or record ID";
+		    } else {
+			    // 2. Resolve
+			    $modelClass = "App\\Modules\\Api\\V1\\" . ucfirst($module) . "\\Models\\" . ucfirst($module);
+			    if (!class_exists($modelClass)) {
+				    $modelClass = "App\\Models\\" . ucfirst($module);
+			    }
+
+			    if (class_exists($modelClass)) {
+				    $record = $modelClass::find($recordId);
+				    // The user snippet uses direct fetch.
+				    if ($record) {
+					    // Check Org Access if model has checking? 
+					    // Assuming standard multitenant
+					    if (isset($record->organization_id) && $record->organization_id != $orgId) {
+						    $error = "Record access denied";
+					    } else {
+						    // Field lookup
+						    $fieldVal = $item['field'] ?? null;
+						    if ($fieldVal) {
+							    $crmField = DB::table('crm_fields')
+								    ->where('modulename', $module)
+								    ->where('apifieldname', $fieldVal)
+								    ->first('fieldname');
+
+							    $realFieldName = $crmField ? $crmField->fieldname : $fieldVal;
+
+							    $to = $record->{$realFieldName} ?? null;
+
+							    if (!$to) {
+								    $error = "No email address found in field '$fieldVal'";
+							    } elseif (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
+								    $error = "Invalid email format: '$to'";
+							    }
+						    } else {
+							    $error = "Field name not provided";
+						    }
+					    }
+				    } else {
+					    $error = "Record not found";
+				    }
+			    } else {
+				    $error = "Module $module not found";
+			    }
+		    }
+
+		    // Check if we should log failure
+		    if ($error) {
+			    MailLog::create([
+				    'organization_id' => $orgId,
+				    'mail_server_id' => $data['server_id'] ?? null,
+				    'direction' => 'outgoing',
+				    'to_email' => $to ?? 'Unknown',
+				    'from_email' => 'System', // Placeholder
+				    'subject' => $data['subject'] ?? 'No Subject',
+				    'body' => $data['body'] ?? '',
+				    'status' => 'failed',
+				    'error_message' => $error,
+				    'created_by' => $userId,
+				    'info' => ['recipient_item' => $item]
+			    ]);
+
+			    $results[] = [
+				    'item' => $item,
+				    'success' => false,
+				    'error' => $error
+			    ];
+			    continue;
+		    }
+
+		    // Success -> Send
+		    $mailData = [
+			    'server_id' => $data['server_id'],
+			    'to' => $to, // String
+			    'subject' => $data['subject'] ?? 'No Subject',
+			    'body' => $data['body'] ?? '',
+			    'cc' => $data['cc'] ?? [],
+			    'bcc' => $data['bcc'] ?? [],
+			    'folder_id' => $data['folder_id'] ?? null
+		    ];
+
+		    if (isset($data['attachments'])) {
+			    $mailData['attachments'] = $data['attachments'];
+		    }
+
+		    // We pass module/recordId for relation
+		    // Pass the original field name to sendMail for logging and formatting
+		    $mailData['related_field'] = $item['field'] ?? null;
+
+		    try {
+			    $result = $this->mailService->sendMail($mailData, $module, $recordId);
+
+			    // Response formatting as requested
+			    if ($result['status'] === true && isset($result['data'])) {
+				    // Flatten structure: "response" key contains the formatted data from sendMail now
+				    $results[] = [
+					    'item' => $item,
+					    'email' => $to,
+					    'success' => true,
+					    'response' => $result['data'] 
+				    ];
+			    } else {
+				    $results[] = [
+					    'item' => $item,
+					    'email' => $to,
+					    'success' => false,
+					    'error' => $result['error'] ?? 'Unknown Error'
+				    ];
+			    }
+
+		    } catch (\Exception $e) {
+			    $results[] = [
+				    'item' => $item,
+				    'success' => false,
+				    'error' => $e->getMessage()
+			    ];
+		    }
+	    }
+	    return $results;
+    }
+    public function syncMailboxStructure(string $serverId, string $orgId, string $userId, string $type = 'Folder')
+{
+    $imapFolders = $this->mailService->getImapFolders($serverId);
+    $synced = [];
+
+    // -------------------------------------------------------------
+    // 1. SYNC FOLDERS
+    // -------------------------------------------------------------
+    if (strtolower($type) === 'folder') {
+
+        foreach ($imapFolders as $imapFolder) {
+
+            $name = $imapFolder['name'];
+            $path = $imapFolder['path'] ?? '';
+
+            // Determine Type & Icon
+            $folderType = 'user';
+            $icon = 'folder';
+            $isSystem = false;
+
+            // -------------------------------
+            // Gmail/System Folder Detection
+            // -------------------------------
+            if (stripos($name, 'inbox') !== false || stripos($path, 'INBOX') !== false) {
+                $folderType = 'system';
+                $icon = 'inbox';
+                $isSystem = true;
+
+            } elseif (stripos($name, 'sent') !== false || stripos($path, 'Sent') !== false) {
+                $folderType = 'system';
+                $icon = 'send';
+                $isSystem = true;
+
+            } elseif (
+                stripos($name, 'trash') !== false ||
+                stripos($name, 'bin') !== false ||
+                stripos($path, 'Bin') !== false ||
+                stripos($path, 'Trash') !== false
+            ) {
+                $folderType = 'system';
+                $icon = 'trash';
+                $isSystem = true;
+
+            } elseif (stripos($name, 'draft') !== false || stripos($path, 'Drafts') !== false) {
+                $folderType = 'system';
+                $icon = 'file-text';
+                $isSystem = true;
+
+            } elseif (
+                stripos($name, 'junk') !== false ||
+                stripos($name, 'spam') !== false ||
+                stripos($path, 'Spam') !== false
+            ) {
+                $folderType = 'system';
+                $icon = 'alert-octagon';
+                $isSystem = true;
             }
-            
-            // Check if we should log failure
-            if ($error) {
-                 MailLog::create([
-                     'organization_id' => $orgId,
-                     'mail_server_id' => $data['server_id'] ?? null,
-                     'direction' => 'outgoing',
-                     'to_email' => $to ?? 'Unknown',
-                     'from_email' => 'System', // Placeholder
-                     'subject' => $data['subject'] ?? 'No Subject',
-                     'body' => $data['body'] ?? '',
-                     'status' => 'failed',
-                     'error_message' => $error,
-                     'created_by' => $userId,
-                     'info' => ['recipient_item' => $item]
-                 ]);
 
-                 $results[] = [
-                     'item' => $item,
-                     'success' => false,
-                     'error' => $error
-                 ];
-                 continue;
-            }
-              
-            // Success -> Send
-             $mailData = [
-                'server_id' => $data['server_id'],
-                'to' => $to, // String
-                'subject' => $data['subject'] ?? 'No Subject',
-                'body' => $data['body'] ?? '',
-                'cc' => $data['cc'] ?? [],
-                'bcc' => $data['bcc'] ?? [],
-                'folder_id' => $data['folder_id'] ?? null
-            ];
-            
-            if (isset($data['attachments'])) {
-                $mailData['attachments'] = $data['attachments'];
-            }
+            $slug = Str::slug($name);
 
-            // We pass module/recordId for relation
-            try {
-                $result = $this->mailService->sendMail($mailData, $module, $recordId);
-                
-                // If sendMail fails, it returns check
-                if ($result['status'] === false) {
-                     // It might have logged inside sendMail? 
-                     // sendMail usually logs outgoing.
+            $folder = MailboxFolder::updateOrCreate(
+                [
+                    'organization_id' => $orgId,
+                    'mail_server_id' => $serverId,
+                    'name' => $name
+                ],
+                [
+                    'user_id' => $userId,
+                    'slug' => $slug,
+                    'type' => $folderType,
+                    'icon' => $icon,
+                    'deleted' => 0
+                ]
+            );
+
+            $synced[] = $folder;
+
+            // ---------------------------------------------------------
+            // Map existing logs to folders (only if folder_id empty)
+            // ---------------------------------------------------------
+            if ($isSystem) {
+
+                // INBOX
+                if (stripos($name, 'inbox') !== false || stripos($path, 'INBOX') !== false) {
+
+                    MailLog::where('organization_id', $orgId)
+                        ->where('mail_server_id', $serverId)
+                        ->where('direction', 'incoming')
+                        ->where(function ($q) {
+                            $q->whereNull('folder_id')
+                              ->orWhere('folder_id', '');
+                              
+                        })
+                        ->update(['folder_id' => $folder->id]);
+
                 }
 
-                $results[] = [
-                     'item' => $item,
-                     'email' => $to,
-                     'success' => $result['status'] ?? false,
-                     'response' => $result
-                ];
-            } catch (\Exception $e) {
-                 $results[] = [
-                     'item' => $item,
-                     'success' => false,
-                     'error' => $e->getMessage()
-                 ];
+                // SENT
+                if (stripos($name, 'sent') !== false || stripos($path, 'Sent') !== false) {
+
+                    MailLog::where('organization_id', $orgId)
+                        ->where('mail_server_id', $serverId)
+                        ->where('direction', 'outgoing')
+                        ->where(function ($q) {
+                            $q->whereNull('folder_id')
+                              ->orWhere('folder_id', '');
+                              
+                        })
+                        ->update(['folder_id' => $folder->id]);
+
+                }
+
+                // DRAFTS
+                if (stripos($name, 'draft') !== false || stripos($path, 'Drafts') !== false) {
+
+                    MailDraft::where('organization_id', $orgId)
+                        ->where('mail_server_id', $serverId)
+                        ->where(function ($q) {
+                            $q->whereNull('folder_id')
+                              ->orWhere('folder_id', '');
+                             
+                        })
+                        ->update(['folder_id' => $folder->id]);
+
+                }
             }
         }
-
-        return $results;
     }
+
+    // -------------------------------------------------------------
+    // 2. SYNC LABELS
+    // -------------------------------------------------------------
+    if (strtolower($type) === 'label') {
+
+        foreach ($imapFolders as $imapFolder) {
+
+            $name = $imapFolder['name'];
+            $path = $imapFolder['path'] ?? '';
+
+            // Skip system folders
+            if (stripos($name, 'inbox') !== false || stripos($path, 'INBOX') !== false) continue;
+            if (stripos($name, 'sent') !== false || stripos($path, 'Sent') !== false) continue;
+            if (stripos($name, 'trash') !== false || stripos($path, 'Trash') !== false) continue;
+            if (stripos($name, 'bin') !== false || stripos($path, 'Bin') !== false) continue;
+            if (stripos($name, 'draft') !== false || stripos($path, 'Drafts') !== false) continue;
+            if (stripos($name, 'junk') !== false) continue;
+            if (stripos($name, 'spam') !== false || stripos($path, 'Spam') !== false) continue;
+
+            $slug = Str::slug($name);
+
+            $label = MailLabel::updateOrCreate(
+                [
+                    'organization_id' => $orgId,
+                    'mail_server_id' => $serverId,
+                    'name' => $name
+                ],
+                [
+                    'user_id' => $userId,
+                    'slug' => $slug,
+                    'color' => '#6B7280',
+                    'deleted' => 0
+                ]
+            );
+
+            $synced[] = $label;
+        }
+    }
+
+    return $synced;
+}
+
 }

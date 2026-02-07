@@ -184,6 +184,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
         Route::get('sent/{id}', [SentController::class, 'show']);
 
         // Folders by server
+        Route::post('folders/sync', [FolderController::class, 'sync']);
 		Route::get('folders/server/{mailServerId}', [FolderController::class,'listByServer']);
 		
 		Route::post('drafts/new', [DraftController::class, 'store']);
@@ -384,6 +385,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			// Module-based mail sending
 			Route::post('{recordId}/mail/send', [MailSendController::class, 'sendFromRecord']);
 			Route::post('{recordId}/mailbox/compose', [MailboxController::class, 'composeFromRecord']);
+            		Route::get('{recordId}/getEmailAddress', [MailSendController::class, 'getEmailAddress']);
 		});
 	});
 });
