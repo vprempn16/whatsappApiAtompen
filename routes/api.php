@@ -159,13 +159,19 @@ Route::prefix('v1')->middleware('api')->group(function () {
 
 	Route::prefix('mail')->group(function () {   
 		Route::post('/send', [MailSendController::class, 'send']);
-		Route::post('imap/new', [MailImapController::class, 'store']);
-		Route::get('imap/{id}', [MailImapController::class, 'show']);
-		Route::post('imap/{id}', [MailImapController::class, 'update']);
-		Route::post('imap/{id}/connect', [MailImapController::class, 'connect']);
+		
 		Route::get('imap/{id}/inbox', [MailImapController::class, 'inbox']);
 		Route::get('imap/{id}/thread/{threadId}', [MailImapController::class, 'showThread']);
 		Route::get('imap/{id}/search', [MailImapController::class, 'search']);
+	});
+
+	Route::prefix('settings/mail/imap')->group(function () {
+		Route::get('/', [MailImapController::class, 'index']);
+		Route::post('/new', [MailImapController::class, 'store']);
+		Route::get('/{id}', [MailImapController::class, 'show']);
+		Route::post('/{id}', [MailImapController::class, 'update']);
+		Route::delete('/{id}', [MailImapController::class, 'destroy']);
+		Route::post('/{id}/connect', [MailImapController::class, 'connect']);
 	});
 
     // ========================================
@@ -180,8 +186,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
         Route::post('bulk-action', [MailboxController::class, 'bulkAction']);
         
         // Sent
-        Route::get('sent', [SentController::class, 'index']);
-        Route::get('sent/{id}', [SentController::class, 'show']);
+        
 
         // Folders by server
         Route::post('folders/sync', [FolderController::class, 'sync']);
@@ -199,6 +204,12 @@ Route::prefix('v1')->middleware('api')->group(function () {
 
 
         Route::resource('signatures', SignatureController::class);
+
+        // New Mailbox Endpoints
+        Route::get('imap-servers', [MailboxController::class, 'getImapServers']);
+        Route::get('{mailServerId}/folders', [MailboxController::class, 'getFolders']);
+        Route::get('{mailServerId}/all', [MailboxController::class, 'getAllEmails']);
+        Route::get('{mailServerId}/{folderIdentifier}', [MailboxController::class, 'getEmailsInFolder']);
     });
 
         // ========================================
@@ -368,6 +379,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
         // ========================================
         // GENERIC MODULE CRUD (MUST BE LAST - wildcard routes)
         // ========================================
+		
 		Route::prefix('{module}')->group(function () {
 			Route::get('/', [RecordController::class, 'index']);
 			Route::post('{id}', [RecordController::class, 'store']);
@@ -385,7 +397,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			// Module-based mail sending
 			Route::post('{recordId}/mail/send', [MailSendController::class, 'sendFromRecord']);
 			Route::post('{recordId}/mailbox/compose', [MailboxController::class, 'composeFromRecord']);
-            		Route::get('{recordId}/getEmailAddress', [MailSendController::class, 'getEmailAddress']);
+            Route::get('{recordId}/getEmailAddress', [MailSendController::class, 'getEmailAddress']);
 		});
 	});
 });

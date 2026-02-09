@@ -17,6 +17,7 @@ class MailLog extends Model
         'id',
         'organization_id',
         'mail_server_id',
+        'related_field',
         'created_by',
         'direction',
         'to_email',
@@ -41,7 +42,8 @@ class MailLog extends Model
         'info',
         'created_at',
         'updated_at',
-        'deleted'
+        'deleted',
+        'attachment_id'   // New
     ];
 
     public function folder()

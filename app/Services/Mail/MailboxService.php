@@ -242,6 +242,9 @@ class MailboxService
             case 'starred':
                 $query->where('is_starred', 1);
                 break;
+            case 'all':
+                $query->whereNull('trashed_at');
+                break;
         }
     }
 
@@ -264,6 +267,7 @@ class MailboxService
         return $email;
     }
 
+    
     /**
      * Bulk Actions
      */
@@ -660,8 +664,8 @@ class MailboxService
 	    return $results;
     }
     public function syncMailboxStructure(string $serverId, string $orgId, string $userId, string $type = 'Folder')
-{
-    $imapFolders = $this->mailService->getImapFolders($serverId);
+    {
+    $imapFolders = $this->mailService->getImapFolders($serverId, $orgId);
     $synced = [];
 
     // -------------------------------------------------------------

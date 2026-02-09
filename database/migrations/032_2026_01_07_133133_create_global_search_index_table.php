@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('global_search_index', function (Blueprint $table) {
             $table->char('id', 36)->nullable(false);
             $table->primary('id');
-            $table->char('organization_id', 36)->nullable();
+            $table->char('organization_id', 36);
             $table->string('module_name', 255)->nullable(false);
             $table->char('record_id', 36)->nullable(false);
             $table->text('search_text')->nullable();

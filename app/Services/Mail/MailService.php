@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Str;
 use App\Mail\GenericMail;
 use App\Services\AuditLogService;
+use App\Models\FieldModelManager;
 
 class MailService{
 
@@ -251,6 +252,10 @@ class MailService{
 	): array {
 		try {
 			$flags = '/imap';
+			
+			if (!function_exists('imap_open')) {
+				throw new \Exception("IMAP extension not enabled in this server.");
+			}
 
 			if ($encryption === 'ssl') {
 				$flags .= '/ssl';
@@ -367,6 +372,7 @@ class MailService{
            
 			$bodyWithPixel = $data['body'] . $pixelHtml;
 
+            
             // Send mail
             $mailable = new GenericMail($data['subject'], $bodyWithPixel);
             
@@ -405,23 +411,33 @@ class MailService{
 				0,
 				null,
 				null,
-				null,
-				null,
-                $data['references'] ?? null,
-                null, // thread_id
-                $trackingToken,
-                $data['folder_id'] ?? null
+				$data['references'] ?? null,
+				null, // thread_id
+				$trackingToken,
+				$data['folder_id'] ?? null
 			);
+
+            // Update related_field if present
+            if (isset($data['related_field'])) {
+                $mailLog->update(['related_field' => $data['related_field']]);
+            }
 
             // Handle Attachments (Save to DB)
             if (!empty($data['attachments'])) {
+                $firstAttachmentId = null;
                 foreach ($data['attachments'] as $attachment) {
                      if (is_array($attachment) && isset($attachment['path'])) {
-                         $this->saveAttachment($mailLog->id, $orgId, $attachment);
+                         $attId = $this->saveAttachment($mailLog->id, $orgId, $attachment);
+                         if (!$firstAttachmentId) $firstAttachmentId = $attId;
                     }
+                }
+                
+                if ($firstAttachmentId) {
+                    $mailLog->update(['attachment_id' => $firstAttachmentId]);
                 }
             }
 
+            
 			// Create mail relation if module and recordId provided
 			if ($module && $recordId) {
 				\App\Modules\Api\V1\Mail\Models\MailRelation::create([
@@ -439,12 +455,15 @@ class MailService{
 			return [
 				'status' => true,
 				'data' => [
-					'organization_id' => $mailLog->organization_id,
-					'mail_server_id' => $mailLog->mail_server_id,
-					'created_by' => $mailLog->created_by,
-					'direction' => $mailLog->direction,
-					'to_email' => $mailLog->to_email,
-					'from_email' => $mailLog->from_email,
+                    'to_email_details' => [
+                        'email' => $mailLog->to_email,
+                        'field_name' => $data['related_field'] ?? ($data['field_name'] ?? null),
+                         // Add field label if we can pass it, otherwise null
+                    ],
+                    'from_email_details' => [
+                        'from_name' => $fromName,
+                        'from_email' => $fromAddress
+                    ],
 					'subject' => $mailLog->subject,
 					'tracking_token' => $mailLog->tracking_token,
 					'status' => $mailLog->status
@@ -515,7 +534,6 @@ class MailService{
         $imapServer = MailImapServer::create([
             'id'              => (string) Str::uuid(),
             'organization_id' => $data['organization_id'],
-            'mail_server_id'  => $data['mail_server_id'] ?? null,
             'created_by'      => $data['created_by'],
             'host'            => $data['host'],
             'port'            => $data['port'],
@@ -629,12 +647,44 @@ class MailService{
         return $server;
     }
 
-	private function getImapServerOrFail($id)
+    public function getAllImapServers($orgId)
+    {
+        return MailImapServer::where('organization_id', $orgId)
+            ->where('deleted', 0)
+            ->get();
+    }
+
+    public function deleteImapServer($serverId, $orgId)
+    {
+        $server = MailImapServer::where('id', $serverId)
+            ->where('organization_id', $orgId)
+            ->where('deleted', 0)
+            ->first();
+
+        if (!$server) {
+            throw new \Exception('IMAP server not found.');
+        }
+
+        $server->update([
+            'deleted' => 1,
+            'updated_at' => now(),
+        ]);
+
+        return true;
+    }
+
+	private function getImapServerOrFail($id, $orgId = null)
 	{
-		$server = MailImapServer::where('id', $id)
-			->where('organization_id', auth()->user()->organization_id)
-			->where('deleted', 0)
-			->first();
+		$query = MailImapServer::where('id', $id)
+			->where('deleted', 0);
+        
+        if ($orgId) {
+            $query->where('organization_id', $orgId);
+        } elseif (auth()->check()) {
+            $query->where('organization_id', auth()->user()->organization_id);
+        }
+
+        $server = $query->first();
 
 		if (!$server) {
 			throw new \Exception('IMAP server not found or access denied');
@@ -678,9 +728,9 @@ class MailService{
 
 		return $imap;
 	}
-	public function fetchImapInbox(string $imapServerId, int $limit = 20): array
+	public function fetchImapInbox(string $imapServerId, int $limit = 20, ?string $orgId = null): array
 	{
-		$server = $this->getImapServerOrFail($imapServerId);
+		$server = $this->getImapServerOrFail($imapServerId, $orgId);
 		$imap = $this->openImapConnection($server);
 
 		$lastUid = $server->last_uid ?? 0;
@@ -690,27 +740,44 @@ class MailService{
 
 		// 1. FORWARD SYNC: Try to get new emails since last sync UID
 		$newMsgNos = [];
+        $total = imap_num_msg($imap);
+
 		if ($lastUid == 0) {
-			$total = imap_num_msg($imap);
 			// Identify the range of LATEST emails, e.g. 81-100
 			if ($total > 0) {
 				$start = max(1, $total - $limit + 1);
 				$newMsgNos = range($start, $total); // Ascending order: 81, 82 ... 100
 			}
 		} else {
-			$nextUid = $lastUid + 1;
-			$newMsgNos = imap_search($imap, "UID $nextUid:*") ?: [];
-			sort($newMsgNos); // Ensure Ascending
+            // Find where the last UID is in the current mailbox
+			$lastMsgNo = imap_msgno($imap, $lastUid);
+
+            if ($lastMsgNo > 0) {
+                // If we found the last synced message, new messages are after it
+                if ($lastMsgNo < $total) {
+                    $newMsgNos = range($lastMsgNo + 1, $total);
+                }
+            } else {
+                // Last UID not found (e.g. deleted on server), fallback to checking last $limit messages
+                \Log::warning("IMAP Sync: Last UID $lastUid not found on server $imapServerId. Resyncing recent.");
+                if ($total > 0) {
+                    $start = max(1, $total - $limit + 1);
+                    $newMsgNos = range($start, $total);
+                }
+            }
 		}
 
 		$highestUid = $lastUid;
-		// dd($imap,$newMsgNos,$lastUid,'mails');
+		
+		
+        // Process collected Message Numbers
 		foreach ($newMsgNos as $msgNo) {
-			$uid = imap_uid($imap, $msgNo);
-			if (!$uid || $uid <= $lastUid) continue;
-			if ($uid > $highestUid) $highestUid = $uid;
+            $currentUid = imap_uid($imap, $msgNo);
 
-			if ($this->syncEmail($imap, $server, $uid)) {
+			if (!$currentUid || $currentUid <= $lastUid) continue;
+			if ($currentUid > $highestUid) $highestUid = $currentUid;
+
+			if ($this->syncEmail($imap, $server, $currentUid)) {
 				$syncedCount++;
 			}
 
@@ -749,6 +816,8 @@ class MailService{
 			}
 		}
 
+		imap_errors(); // Flush errors
+		imap_alerts(); // Flush alerts
 		imap_close($imap);
 
 		if ($highestUid > $lastUid) {
@@ -761,7 +830,8 @@ class MailService{
 		\Log::info("IMAP Sync Finished", ['server_id' => $imapServerId, 'newly_synced' => $syncedCount]);
 
 		// 3. FETCH ALL EMAILS AND GROUP BY THREADS
-		$allMails = MailLog::where('mail_server_id', $server->id)
+		$allMails = MailLog::with(['mailRelations']) // Eager load relations
+            ->where('mail_server_id', $server->id)
 			->where('direction', 'incoming')
 			->where('deleted', 0)
 			->orderBy('created_at', 'desc')
@@ -786,12 +856,31 @@ class MailService{
 					'messages' => []
 				];
 			}
+            
+            // Resolve details
+            $relation = $mail->mailRelations->first();
+            $fromDetails = ['email' => $mail->from_email, 'name' => null, 'module' => null, 'record_id' => null];
+            $toDetails = ['email' => $mail->to_email, 'name' => null];
+
+            if ($relation) {
+                // If finding who sent it (incoming)
+                if ($mail->direction === 'incoming') {
+                     $fromDetails['module'] = $relation->module;
+                     $fromDetails['record_id'] = $relation->record_id;
+                     // Ideally we fetch the name too, but avoiding N+1.
+                     // Front-end can fetch record details if needed, or we can sparsely load if critical.
+                }
+            }
+            
+            // Note: $mail->direction here is 'incoming' per query, but good to be generic if logic changes.
 
 			// Add message to thread
 			$threadsMap[$threadId]['messages'][] = [
 				'id' => $mail->id,
 				'from' => $mail->from_email,
 				'to' => $mail->to_email,
+                'from_email_details' => $fromDetails,
+                'to_email_details' => $toDetails,
 				'subject' => $mail->subject,
 				'body' => $mail->body,
 				'body_preview' => strip_tags(substr($mail->body, 0, 200)),
@@ -1030,10 +1119,10 @@ private function syncEmail($imap, $server, $uid)
 
     $body = $this->getEmailBody($imap, $uid);
 
-    $this->createLog(
+    $mailLog = $this->createLog(
         $server->organization_id,
         $server->id,
-        auth()->id(),
+        auth()->id(), // Note: If running via job, this might be null. distinct check needed if scheduled.
         'incoming',
         $server->username,
         $overview->from ?? null,
@@ -1055,7 +1144,218 @@ private function syncEmail($imap, $server, $uid)
         $threadId
     );
 
+    // Handle Attachments
+    $this->processImapAttachments($imap, $uid, $mailLog, $server->organization_id);
+    
+    // Automatically link to CRM
+    $this->linkIncomingMailToCRM($mailLog);
+
     return true;
+}
+
+    private function processImapAttachments($imap, $uid, $mailLog, $orgId)
+    {
+        $structure = imap_fetchstructure($imap, $uid, FT_UID);
+        $attachments = [];
+        
+        if (isset($structure->parts) && count($structure->parts)) {
+             for ($i = 0; $i < count($structure->parts); $i++) {
+                 $attachments = array_merge($attachments, $this->extractImapAttachments($imap, $uid, $structure->parts[$i], ((string)($i + 1))));
+             }
+        }
+        
+        $firstAttId = null;
+        foreach ($attachments as $attData) {
+            // Save content to storage
+            $storedPath = 'mail-attachments/' . $orgId . '/' . Str::random(40) . '_' . Str::slug($attData['name']); // Flatten name
+            \Illuminate\Support\Facades\Storage::put($storedPath, $attData['content']);
+            
+            $saveData = [
+                'name' => $attData['name'],
+                'path' => storage_path('app/' . $storedPath), // Absolute path for consistency with upload
+                'mime_type' => $attData['mime_type'],
+                'size' => $attData['size'],
+                'disk' => 'local'
+            ];
+            
+            $attId = $this->saveAttachment($mailLog->id, $orgId, $saveData);
+            if (!$firstAttId) $firstAttId = $attId;
+        }
+        
+        if ($firstAttId) {
+            $mailLog->update(['attachment_id' => $firstAttId]);
+        }
+    }
+
+    private function extractImapAttachments($imap, $uid, $part, $partNum)
+    {
+        $attachments = [];
+
+        if (isset($part->parts)) {
+             foreach ($part->parts as $key => $subpart) {
+                 $attachments = array_merge($attachments, $this->extractImapAttachments($imap, $uid, $subpart, $partNum . "." . ($key + 1)));
+             }
+             return $attachments;
+        }
+
+        if (isset($part->disposition) && strtoupper($part->disposition) == 'ATTACHMENT') {
+            $filename = 'unknown_attachment';
+            if (isset($part->dparameters)) {
+                foreach ($part->dparameters as $object) {
+                    if (strtolower($object->attribute) == 'filename') {
+                        $filename = $object->value;
+                    }
+                }
+            }
+
+            if ($filename == 'unknown_attachment' && isset($part->parameters)) {
+                foreach ($part->parameters as $object) {
+                    if (strtolower($object->attribute) == 'name') {
+                        $filename = $object->value;
+                    }
+                }
+            }
+            
+            $content = imap_fetchbody($imap, $uid, $partNum, FT_UID);
+            if ($part->encoding == 3) {
+                $content = base64_decode($content);
+            } elseif ($part->encoding == 4) {
+                $content = quoted_printable_decode($content);
+            }
+            
+            $attachments[] = [
+                'name' => $filename,
+                'content' => $content,
+                'mime_type' => $this->getMimeTypeFromPart($part),
+                'size' => strlen($content)
+            ];
+        }
+        
+        return $attachments;
+    }
+    
+    private function getMimeTypeFromPart($part)
+    {
+        $primaryType = ['TEXT', 'MULTIPART', 'MESSAGE', 'APPLICATION', 'AUDIO', 'IMAGE', 'VIDEO', 'OTHER'];
+        $type = $primaryType[$part->type] ?? 'APPLICATION';
+        $subType = $part->subtype ?? 'OCTET-STREAM';
+        return strtolower($type . '/' . $subType);
+    }
+
+/**
+ * Link incoming email to CRM records (Contact/Lead)
+ */
+private function linkIncomingMailToCRM($mailLog)
+{
+    // Only for incoming
+    if ($mailLog->direction !== 'incoming') return;
+    
+    $email = $this->extractEmailAddress($mailLog->from_email);
+    if (!$email) return;
+
+    $orgId = $mailLog->organization_id;
+    $modules = ['Contact', 'Lead'];
+
+    foreach ($modules as $crmModuleName) {
+        try {
+            // Use FieldModelManager to get fields
+            $fieldManager = FieldModelManager::make($crmModuleName, 'EditView', true);
+            $fields = $fieldManager->getFields();
+
+            foreach ($fields as $fieldModel) {
+                // Check if field is Email type (case insensitive)
+                if (strcasecmp($fieldModel->getFieldType(), 'email') === 0) {
+                    $tableName = $fieldModel->getTableName();
+                    $fieldName = $fieldModel->getFieldName(); // Database column name
+
+                    // Query the table
+                    $record = DB::table($tableName)
+                        ->where($fieldName, $email)
+                        ->where('organization_id', $orgId)
+                        ->where('deleted', 0)
+                        ->first();
+
+                    if ($record) {
+                        $this->createMailRelation($mailLog, $crmModuleName, $record->id);
+                        // Continue to find other matches (other email fields or other modules)
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            // Log warning if module loading fails (e.g. module doesn't exist)
+            \Log::warning("MailService: Failed to link CRM module {$crmModuleName} - " . $e->getMessage());
+        }
+    }
+}
+
+/**
+ * Fetch generic IMAP folders from server
+ */
+public function getImapFolders(string $serverId, ?string $orgId = null): array
+{
+    $server = $this->getImapServerOrFail($serverId, $orgId);
+    $imap = $this->openImapConnection($server);
+
+    $folders = imap_list($imap, "{".$server->host."}", "*");
+    $result = [];
+
+    if (is_array($folders)) {
+        foreach ($folders as $folder) {
+            // Remove server info from name: {imap.example.com}INBOX -> INBOX
+            $name = str_replace("{".$server->host."}", "", $folder);
+            // Some servers might return {host:port/ssl...} format, imap_list returns full spec.
+            // Better to strip everything before '}'
+            $pos = strpos($folder, '}');
+            if ($pos !== false) {
+                $name = substr($folder, $pos + 1);
+            }
+            
+            // Decode modified UTF-7 (common in IMAP)
+            $name = mb_convert_encoding($name, "UTF-8", "UTF7-IMAP");
+
+            $result[] = [
+                'name' => $name,
+                'path' => $folder // Keep full path for operations if needed? usually helper handles it
+            ];
+        }
+    }
+
+    imap_close($imap);
+    return $result;
+}
+
+private function extractEmailAddress($string)
+{
+    // Extract email from "Name <email@example.com>" or just "email@example.com"
+    if (filter_var($string, FILTER_VALIDATE_EMAIL)) {
+        return $string;
+    }
+    preg_match('/<(.+)>/', $string, $matches);
+    return $matches[1] ?? null;
+}
+
+private function createMailRelation($mailLog, $module, $recordId)
+{
+    // Check if relation already exists
+    $exists = \App\Modules\Api\V1\Mail\Models\MailRelation::where('mail_log_id', $mailLog->id)
+        ->where('module', $module)
+        ->where('record_id', $recordId)
+        ->exists();
+
+    if (!$exists) {
+        \App\Modules\Api\V1\Mail\Models\MailRelation::create([
+            'id' => (string) Str::uuid(),
+            'organization_id' => $mailLog->organization_id,
+            'module' => $module,
+            'record_id' => $recordId,
+            'mail_log_id' => $mailLog->id,
+            'created_by' => $mailLog->created_by,
+            'created_at' => now(),
+            'deleted' => 0
+        ]);
+        
+        \Log::info("Linked Mail {$mailLog->id} to $module $recordId");
+    }
 }
 
 /**
@@ -1170,6 +1470,26 @@ private function syncEmail($imap, $server, $uid)
 			'created_at' => now(),
 			'deleted' => 0
 		]);
-	}
+		}
+
+    public function saveAttachment($mailLogId, $orgId, $attachmentData)
+    {
+        $attachment = \App\Modules\Api\V1\Mailbox\Models\MailAttachment::create([
+            'id' => (string) Str::uuid(),
+            'organization_id' => $orgId,
+            'mail_log_id' => $mailLogId,
+            'filename' => $attachmentData['name'] ?? 'unknown',
+            'original_filename' => $attachmentData['original_name'] ?? ($attachmentData['name'] ?? 'unknown'),
+            'mime_type' => $attachmentData['mime_type'] ?? 'application/octet-stream',
+            'size' => $attachmentData['size'] ?? 0,
+            'storage_path' => $attachmentData['path'] ?? '', // Should be relative path from storage/app ideally, but using absolute for now if that's what was passed
+            'storage_disk' => $attachmentData['disk'] ?? 'local',
+            'created_at' => now(),
+            'deleted' => 0
+        ]);
+
+        return $attachment->id;
+    }
 }
+
 

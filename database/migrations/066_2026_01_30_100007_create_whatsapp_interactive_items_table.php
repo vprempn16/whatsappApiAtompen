@@ -8,6 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
+	                if (!Schema::hasTable('whatsapp_interactive_items')) {
         Schema::create('whatsapp_interactive_items', function (Blueprint $table) {
             $table->char('id', 36)->nullable(false);
             $table->primary('id');
@@ -35,7 +36,8 @@ return new class extends Migration
                 ->references('id')->on('whatsapp_interactives')->cascadeOnDelete();
             $table->foreign('organization_id', 'whatsapp_interactive_items_organization_id_foreign')
                 ->references('id')->on('organizations')->cascadeOnDelete();
-        });
+	});
+			}
     }
 
     public function down(): void

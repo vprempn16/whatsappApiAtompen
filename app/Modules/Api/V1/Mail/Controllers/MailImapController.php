@@ -20,6 +20,42 @@ class MailImapController extends Controller
     }
 
     /**
+     * List all IMAP servers
+     */
+    public function index()
+    {
+        $orgId = auth()->user()->organization_id;
+        if (!$orgId) {
+            return $this->error('Organization not found');
+        }
+
+        try {
+            $servers = $this->mailService->getAllImapServers($orgId);
+            return $this->success($servers, 'IMAP servers fetched successfully');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage());
+        }
+    }
+
+    /**
+     * Delete IMAP server
+     */
+    public function destroy($id)
+    {
+        $orgId = auth()->user()->organization_id;
+        if (!$orgId) {
+            return $this->error('Organization not found');
+        }
+
+        try {
+            $this->mailService->deleteImapServer($id, $orgId);
+            return $this->success([], 'IMAP server deleted successfully');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage());
+        }
+    }
+
+    /**
      * Save / Update IMAP configuration
      */
     public function store(Request $request)
@@ -99,6 +135,7 @@ class MailImapController extends Controller
         }
     }
 
+    
     public function show($id)
     {
         $orgId = auth()->user()->organization_id;

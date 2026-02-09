@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Services\Mail\MailService;
 use App\Traits\ResultTrait;
 use Illuminate\Http\Request;
+use App\Services\Mail\MailObject;
+use App\Services\CRM\RecordObject;
 
 class MailSendController extends Controller
 {
@@ -75,6 +77,32 @@ class MailSendController extends Controller
             return $this->error('Recipients are required');
         }
 
+        // Handle File Uploads
+        $attachments = [];
+        if ($request->hasFile('attachments')) {
+            $folderPath = 'mail-attachments/' . $orgId;
+            if (!\Illuminate\Support\Facades\Storage::disk('mail_attachments')->exists($folderPath)) {
+                \Illuminate\Support\Facades\Storage::disk('mail_attachments')->makeDirectory($folderPath);
+            }
+
+            foreach ($request->file('attachments') as $file) {
+                 $path = $file->store($folderPath, 'mail_attachments');
+                 $attachments[] = [
+                     'path' => \Illuminate\Support\Facades\Storage::disk('mail_attachments')->path($path),
+                     'name' => $file->getClientOriginalName(),
+                     'original_name' => $file->getClientOriginalName(),
+                     'mime_type' => $file->getMimeType(),
+                     'size' => $file->getSize(),
+                     'disk' => 'mail_attachments'
+                 ];
+            }
+        }
+        
+        // Add attachments to values if any
+        if (!empty($attachments)) {
+            $values['attachments'] = $attachments;
+        }
+
         // Use MailboxService to handle complex recipient resolution and sending
         // Note: We need MailboxService instance. MailSendController currently only has MailService.
         // We can resolve it from container.
@@ -87,5 +115,12 @@ class MailSendController extends Controller
         } catch (\Throwable $e) {
             return $this->error($e->getMessage());
         }
+    }
+    public function getEmailAddress(string $module, string $recordId)
+    {
+        $record = RecordObject::make($module, $recordId, [], 'DetailView', false);
+        $result = $record->getEmailAddress($module, $recordId);
+
+        return $this->success($result, 'Email address retrieved');
     }
 }

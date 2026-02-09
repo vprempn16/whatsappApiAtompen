@@ -8,6 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
+	    if (!Schema::hasTable('whatsapp_channel_template_rel')) {
         Schema::create('whatsapp_channel_template_rel', function (Blueprint $table) {
             $table->char('id', 36)->nullable(false);
             $table->primary('id');
@@ -20,7 +21,8 @@ return new class extends Migration
                 ->references('id')->on('whatsapp_channels')->cascadeOnDelete();
             $table->foreign('whatsapp_template_id', 'whatsapp_channel_template_rel_template_id_foreign')
                 ->references('id')->on('whatsapp_templates')->cascadeOnDelete();
-        });
+	});
+	    }
     }
 
     public function down(): void
