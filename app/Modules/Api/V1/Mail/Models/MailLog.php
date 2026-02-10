@@ -61,9 +61,15 @@ class MailLog extends Model
         );
     }
 
+
     public function attachments()
     {
         return $this->hasMany(\App\Modules\Api\V1\Mailbox\Models\MailAttachment::class, 'mail_log_id');
+    }
+
+    public function mailRelations()
+    {
+        return $this->hasMany(MailRelation::class, 'mail_log_id');
     }
 
     protected static function boot()

@@ -14,7 +14,7 @@ class MailboxFolder extends Model
     protected $fillable = [
         'id', 'organization_id','created_by', 'user_id', 'mail_server_id',
         'name', 'slug', 'type', 'icon', 'sort_order',
-        'is_default', 'deleted'
+        'is_default', 'deleted', 'last_uid','min_uid','last_sync_at'
     ];
 
     protected static function boot()

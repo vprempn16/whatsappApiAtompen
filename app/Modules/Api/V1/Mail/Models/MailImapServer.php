@@ -11,6 +11,8 @@ class MailImapServer extends Model
 
     protected $fillable = [
         'id',
+        'name',
+        'description',
         'organization_id',
         'mail_server_id',
         'created_by',
@@ -21,6 +23,7 @@ class MailImapServer extends Model
         'encryption',
         'folder',
         'last_uid',
+        'min_uid',
         'last_sync_at',
         'is_active',
         'deleted'

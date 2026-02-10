@@ -60,6 +60,8 @@ class MailServerController extends Controller
        
 
         $validator = Validator::make($values, [
+            'name'       => 'required|string|max:100',
+            'description'=> 'nullable|string',
             'username'   => 'required|string|max:100',
             'password'   => 'required|string',
             'host'       => 'required|string',
@@ -105,6 +107,8 @@ class MailServerController extends Controller
         }
 
         $validator = Validator::make($values, [
+            'name'       => 'required|string|max:100',
+            'description'=> 'nullable|string',
             'username'   => 'required|string|max:100',
             'password'   => 'required|string', // Optional on update
             'host'       => 'required|string',

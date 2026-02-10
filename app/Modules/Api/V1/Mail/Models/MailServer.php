@@ -11,6 +11,8 @@ class MailServer extends Model{
 
 	protected $fillable = [
 		'id',
+		'name',
+		'description',
 		'organization_id',
 		'created_by',
 		'mail_type',

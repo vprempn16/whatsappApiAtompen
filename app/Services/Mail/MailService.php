@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use App\Mail\GenericMail;
 use App\Services\AuditLogService;
 use App\Models\FieldModelManager;
+use Illuminate\Support\Facades\DB;
 
 class MailService{
 
@@ -535,6 +536,8 @@ class MailService{
             'id'              => (string) Str::uuid(),
             'organization_id' => $data['organization_id'],
             'created_by'      => $data['created_by'],
+            'name'            => $data['name'],
+            'description'     => $data['description'] ?? null,
             'host'            => $data['host'],
             'port'            => $data['port'],
             'encryption'      => $data['encryption'],
@@ -640,10 +643,18 @@ class MailService{
             ->where('deleted', 0)
             ->first();
 
+        try {
+            $decryptedPassword = Crypt::decryptString($server->password);
+        } catch (\Exception $e) {
+            // If existing password is messed up, we might fail validation if we rely on it.
+            // Fallback to raw if possible or assume user must provide new password if validation fails?
+            // For now, assume decrypt works.
+            $decryptedPassword = $server->password; 
+        }
+        $server->password = $decryptedPassword;
         if (!$server) {
             throw new \Exception('IMAP server not found.');
         }
-
         return $server;
     }
 
@@ -704,130 +715,250 @@ class MailService{
 		return true;
 	}
 
-	private function openImapConnection($server)
-	{
-		if (!$server->host || !$server->port || !$server->username || !$server->password ) {
-			throw new \Exception('IMAP credentials not configured');
-		}
+    private function openImapConnection($server, $folder = null)
+    {
+        if (!$server->host || !$server->port || !$server->username || !$server->password ) {
+            throw new \Exception('IMAP credentials not configured');
+        }
 
-		$mailbox = sprintf(
-			'{%s:%s/imap/%s}%s',
-			$server->host,
-			$server->port,
-			strtolower($server->encryption ?? 'ssl'),
-			$server->folder ?? 'INBOX'
-		);
+        $folderName = $folder ?? ($server->folder ?? 'INBOX');
 
-		$password = \Crypt::decryptString($server->password);
+        $mailbox = sprintf(
+            '{%s:%s/imap/%s}%s',
+            $server->host,
+            $server->port,
+            strtolower($server->encryption ?? 'ssl'),
+            $folderName
+        );
 
-		$imap = @imap_open($mailbox, $server->username, $password);
+        $password = \Crypt::decryptString($server->password);
 
-		if (!$imap) {
-			throw new \Exception(imap_last_error());
-		}
+        $imap = @imap_open($mailbox, $server->username, $password);
 
-		return $imap;
-	}
-	public function fetchImapInbox(string $imapServerId, int $limit = 20, ?string $orgId = null): array
+        if (!$imap) {
+            throw new \Exception(imap_last_error());
+        }
+
+        return $imap;
+    }
+	public function fetchImapInbox(string $imapServerId, int $limit = 20, ?string $orgId = null, $mailboxFolder = null, bool $isUnified = false): array
 	{
 		$server = $this->getImapServerOrFail($imapServerId, $orgId);
-		$imap = $this->openImapConnection($server);
+        
+        $folderName = 'INBOX';
+        $folderId = null;
+        $minUid = null;
+        $lastUid = null;
 
-		$lastUid = $server->last_uid ?? 0;
-		\Log::info("IMAP Sync Start", ['server_id' => $imapServerId, 'last_uid' => $lastUid]);
+        if ($mailboxFolder) {
+            $folderName = $mailboxFolder->name;
+            $folderId = $mailboxFolder->id;
+            $minUid = $mailboxFolder->min_uid;
+            $lastUid = $mailboxFolder->last_uid;
+        } else {
+            $minUid = $server->min_uid ?? null;
+            $lastUid = $server->last_uid ?? null;
+        }
 
+		$imap = $this->openImapConnection($server, $folderName);
+		$total = imap_num_msg($imap);
+
+		\Log::info("IMAP Sync Start", [
+            'server_id' => $imapServerId, 
+            'folder' => $folderName, 
+            'min_uid' => $minUid,
+            'last_uid' => $lastUid,
+            'total_msgs' => $total,
+            'is_unified' => $isUnified
+        ]);
+
+        dd($total);
 		$syncedCount = 0;
+        $highestUid = $lastUid ?? 0;
+        $lowestUid = $minUid;
 
-		// 1. FORWARD SYNC: Try to get new emails since last sync UID
-		$newMsgNos = [];
-        $total = imap_num_msg($imap);
-
-		if ($lastUid == 0) {
-			// Identify the range of LATEST emails, e.g. 81-100
-			if ($total > 0) {
-				$start = max(1, $total - $limit + 1);
-				$newMsgNos = range($start, $total); // Ascending order: 81, 82 ... 100
-			}
-		} else {
-            // Find where the last UID is in the current mailbox
-			$lastMsgNo = imap_msgno($imap, $lastUid);
-
-            if ($lastMsgNo > 0) {
-                // If we found the last synced message, new messages are after it
-                if ($lastMsgNo < $total) {
-                    $newMsgNos = range($lastMsgNo + 1, $total);
-                }
+		// PHASE 1: PROGRESSIVE FORWARD SYNC (Oldest to Newest)
+        // Fetch emails in ascending UID order starting from min_uid
+        
+        if ($total > 0) {
+            $startUid = null;
+            $endUid = null;
+            
+            // Determine starting point
+            if ($minUid === null || $minUid == 0) {
+                // First sync: Find the oldest UID in the mailbox
+                $firstMsgNo = 1;
+                $startUid = imap_uid($imap, $firstMsgNo);
+                \Log::info("IMAP First Sync", ['starting_from_uid' => $startUid]);
             } else {
-                // Last UID not found (e.g. deleted on server), fallback to checking last $limit messages
-                \Log::warning("IMAP Sync: Last UID $lastUid not found on server $imapServerId. Resyncing recent.");
-                if ($total > 0) {
-                    $start = max(1, $total - $limit + 1);
-                    $newMsgNos = range($start, $total);
+                // Continue from where we left off
+                $startUid = $minUid;
+                \Log::info("IMAP Progressive Sync", ['continuing_from_uid' => $startUid]);
+            }
+            
+            // Find the message number for start UID
+            $startMsgNo = imap_msgno($imap, $startUid);
+            
+            if ($startMsgNo == 0) {
+                // Start UID doesn't exist anymore (deleted), find next available
+                \Log::warning("IMAP Start UID $startUid not found, searching for next available");
+                for ($msgNo = 1; $msgNo <= $total; $msgNo++) {
+                    $uid = imap_uid($imap, $msgNo);
+                    if ($uid >= $startUid) {
+                        $startMsgNo = $msgNo;
+                        $startUid = $uid;
+                        break;
+                    }
                 }
             }
-		}
+            
+            if ($startMsgNo > 0) {
+                // Calculate end message number (fetch up to $limit emails)
+                $endMsgNo = min($startMsgNo + $limit - 1, $total);
+                
+                \Log::info("IMAP Fetching Range", [
+                    'start_msg_no' => $startMsgNo,
+                    'end_msg_no' => $endMsgNo,
+                    'start_uid' => $startUid
+                ]);
+                
+                // Fetch emails in ascending order
+                for ($msgNo = $startMsgNo; $msgNo <= $endMsgNo; $msgNo++) {
+                    $uid = imap_uid($imap, $msgNo);
+                    
+                    if (!$uid) continue;
+                    
+                    // Track highest and lowest UIDs
+                    if ($uid > $highestUid) $highestUid = $uid;
+                    if ($lowestUid === null || $uid < $lowestUid) $lowestUid = $uid;
+                    
+                    // Sync the email
+                    if ($this->syncEmail($imap, $server, $uid, $folderId, $isUnified)) {
+                        $syncedCount++;
+                    }
+                }
+                
+                // Update min_uid to next batch starting point
+                if ($endMsgNo < $total) {
+                    // More emails to fetch, set min_uid to next UID
+                    $nextMsgNo = $endMsgNo + 1;
+                    $nextUid = imap_uid($imap, $nextMsgNo);
+                    if ($nextUid) {
+                        $lowestUid = $nextUid;
+                    }
+                } else {
+                    // All emails synced, set min_uid to null to indicate completion
+                    $lowestUid = null;
+                }
+            }
+        }
 
-		$highestUid = $lastUid;
-		
-		
-        // Process collected Message Numbers
-		foreach ($newMsgNos as $msgNo) {
-            $currentUid = imap_uid($imap, $msgNo);
-
-			if (!$currentUid || $currentUid <= $lastUid) continue;
-			if ($currentUid > $highestUid) $highestUid = $currentUid;
-
-			if ($this->syncEmail($imap, $server, $currentUid)) {
-				$syncedCount++;
-			}
-
-			if ($syncedCount >= $limit) break;
-		}
-
-		// 2. BACKWARD SYNC: If we haven't reached the limit with NEW emails, fetch OLD history
-		if ($syncedCount < $limit) {
-			$lowestUidInDb = MailLog::where('mail_server_id', $server->id)
-				->where('direction', 'incoming')
-				->whereNotNull('imap_uid')
-				->where('deleted', 0)
-				->min('imap_uid');
-
-			if ($lowestUidInDb && $lowestUidInDb > 1) {
-				$msgNo = imap_msgno($imap, $lowestUidInDb);
-				if ($msgNo > 1) {
-					// We want to fetch the block BEFORE the current lowest.
-					// e.g. current lowest is 81. We want 20 before that: 61 to 80.
-					// But we must PROCESS them 61->80 (Ascending).
-
-					$endMsgNo = $msgNo - 1; // 80
-					$needed = $limit - $syncedCount;
-					$startMsgNo = max(1, $endMsgNo - $needed + 1); // 61
-
-					\Log::info("IMAP Backfilling history", ['server_id' => $imapServerId, 'start_msg_no' => $startMsgNo, 'end_msg_no' => $endMsgNo]);
-
-					// Loop Ascending
-					for ($m = $startMsgNo; $m <= $endMsgNo; $m++) {
-						$uid = imap_uid($imap, $m);
-						if ($uid && $this->syncEmail($imap, $server, $uid)) {
-							$syncedCount++;
-						}
-					}
-				}
-			}
-		}
+		// PHASE 2: STATE REFRESH (Check recent emails for changes)
+        // Only run state refresh when forward sync is COMPLETE (lowestUid will be null)
+        // This prevents syncing newest emails during progressive forward sync
+        if ($lowestUid === null && $lastUid && $lastUid > 0 && $total > 0) {
+            $refreshLimit = min(50, $total);
+            $refreshStart = max(1, $total - $refreshLimit + 1);
+            
+            \Log::info("IMAP State Refresh", [
+                'refresh_range' => "$refreshStart-$total",
+                'checking_for_changes' => true,
+                'reason' => 'Forward sync complete, checking for state changes'
+            ]);
+            
+            for ($msgNo = $refreshStart; $msgNo <= $total; $msgNo++) {
+                $uid = imap_uid($imap, $msgNo);
+                if ($uid) {
+                    // Skip if already processed in forward sync
+                    if ($uid >= $startUid && $uid <= $highestUid) {
+                        continue;
+                    }
+                    
+                    // This will update existing emails if state changed
+                    $this->syncEmail($imap, $server, $uid, $folderId, $isUnified);
+                    
+                    if ($uid > $highestUid) $highestUid = $uid;
+                }
+            }
+        }
 
 		imap_errors(); // Flush errors
-		imap_alerts(); // Flush alerts
-		imap_close($imap);
+	imap_alerts(); // Flush alerts
+	imap_close($imap);
 
-		if ($highestUid > $lastUid) {
-			$server->update([
-				'last_uid' => $highestUid,
-				'last_sync_at' => now()
-			]);
-		}
+		// Update sync tracking - MUST BE BEFORE THREADING SECTION
+		// Update sync tracking - MUST BE BEFORE THREADING SECTION
+		
+		// 1. Update MailboxFolder if it exists
+        if ($mailboxFolder) {
+            $folderUpdates = [];
+            
+            // Always update min_uid (including when it's null to mark completion)
+            if ($lowestUid !== $mailboxFolder->min_uid) {
+                $folderUpdates['min_uid'] = $lowestUid;
+            }
+            
+            if ($highestUid > ($mailboxFolder->last_uid ?? 0)) {
+                $folderUpdates['last_uid'] = $highestUid;
+            }
+             \Log::info("IMAP Sync Tracking - Folder Update", [
+                'folder' => $folderName,
+                'current_min' => $mailboxFolder->min_uid,
+                'new_min' => $lowestUid,
+                'new_max' => $highestUid,
+            ]);
 
-		\Log::info("IMAP Sync Finished", ['server_id' => $imapServerId, 'newly_synced' => $syncedCount]);
+            $folderUpdates['last_sync_at'] = now();
+            
+            if (!empty($folderUpdates)) {
+                $mailboxFolder->update($folderUpdates);
+            }
+        } 
+
+		// 2. Update MailImapServer if this is the configured folder OR as a fallback
+		// We update the server tracking if the current folder matches the server's main folder
+		// OR if no mailbox folder exists (legacy behavior/fallback)
+		$isMainFolder = ($folderName === $server->folder) || ($folderName === 'INBOX' && empty($server->folder));
+		
+        if (!$mailboxFolder || $isMainFolder) {
+            $serverUpdates = [];
+            
+            \Log::info("IMAP Sync Tracking - Server Update Check", [
+                'server_id' => $server->id,
+                'folder_name' => $folderName,
+                'server_folder' => $server->folder,
+                'is_main_folder' => $isMainFolder,
+                'has_mailbox_folder' => !!$mailboxFolder
+            ]);
+            
+            // Always update min_uid (including when it's null to mark completion)
+            if ($lowestUid !== $server->min_uid) {
+                $serverUpdates['min_uid'] = $lowestUid;
+            }
+            
+            if ($highestUid > ($server->last_uid ?? 0)) {
+                $serverUpdates['last_uid'] = $highestUid;
+            }
+            
+            $serverUpdates['last_sync_at'] = now();
+            
+            \Log::info("IMAP Sync Tracking - Server Updates Prepared", [
+                'server_updates' => $serverUpdates
+            ]);
+            
+            if (!empty($serverUpdates)) {
+                $result = $server->update($serverUpdates);
+                
+                \Log::info("IMAP Sync Tracking - Server Updated", [
+                    'server_id' => $server->id,
+                    'update_result' => $result,
+                    'new_min_uid' => $server->fresh()->min_uid,
+                    'new_last_uid' => $server->fresh()->last_uid,
+                ]);
+            }
+        }
+
+		\Log::info("IMAP Sync Finished", ['server_id' => $imapServerId, 'folder' => $folderName, 'newly_synced' => $syncedCount]);
 
 		// 3. FETCH ALL EMAILS AND GROUP BY THREADS
 		$allMails = MailLog::with(['mailRelations']) // Eager load relations
@@ -1026,31 +1157,36 @@ public function getThreadMails(string $imapServerId, string $threadId): array
 /**
  * Helper to sync a single email
  */
-private function syncEmail($imap, $server, $uid)
+    private function syncEmail($imap, $server, $uid, $folderId = null, bool $isUnified = false)
 {
-    // Check if message already exists in log
+    $overviews = imap_fetch_overview($imap, $uid, FT_UID);
+    if (empty($overviews)) return false;
+    $overview = $overviews[0];
+    $messageId = $overview->message_id ?? null;
+
+    // Check if message already exists in log (by UID or Message-ID)
     $log = MailLog::where('mail_server_id', $server->id)
-        ->where('imap_uid', $uid)
+        ->where(function($q) use ($uid, $messageId) {
+            $q->where('imap_uid', $uid);
+            if ($messageId) {
+                $q->orWhere('message_id', $messageId);
+            }
+        })
         ->where('deleted', 0)
         ->first();
 
-    $overviews = imap_fetch_overview($imap, $uid, FT_UID);
-   
-    if (empty($overviews)) return false;
-    
-    $overview = $overviews[0];
+    // If Unified Sync, identify the "real" folder for this message
+    if ($isUnified) {
+        $folderId = $this->mapEmailToFolder($server, $overview, $folderId);
+    }
+
     $isRead = !empty($overview->seen) ? 1 : 0;
     
     // Extract headers for threading
-    $messageId = $overview->message_id ?? null;
     $inReplyTo = $overview->in_reply_to ?? null;
     $references = $overview->references ?? null;
 
-    \Log::info("Threading Debug [$uid]", [
-        'msg_id' => $messageId,
-        'in_reply' => $inReplyTo,
-        'refs' => $references
-    ]);
+    //\Log::info("Threading Debug [$uid]", ['msg_id' => $messageId,'in_reply' => $inReplyTo,'refs' => $references]);
     
     // Calculate Thread ID
     $threadId = (string) Str::uuid(); // Default to new thread
@@ -1063,12 +1199,12 @@ private function syncEmail($imap, $server, $uid)
             ->first();
         
         if ($parent) {
-             \Log::info("Parent found via In-Reply-To", ['parent_id' => $parent->id, 'thread_id' => $parent->thread_id]);
+             //\Log::info("Parent found via In-Reply-To", ['parent_id' => $parent->id, 'thread_id' => $parent->thread_id]);
              if ($parent->thread_id) {
                 $threadId = $parent->thread_id;
              }
         } else {
-             \Log::info("Parent NOT found via In-Reply-To", ['search_msg_id' => $inReplyTo]);
+             //\Log::info("Parent NOT found via In-Reply-To", ['search_msg_id' => $inReplyTo]);
         }
     }
     
@@ -1104,10 +1240,31 @@ private function syncEmail($imap, $server, $uid)
     // This is complex and expensive, usually standard flow handles it. 
     // Optimization: Just stick to finding parents.
 
-    // If exists, update read status if changed and return false (not a new email)
+    // If exists, update read status and folder if changed
     if ($log) {
         $updates = [];
-        if ($log->is_read != $isRead) $updates['is_read'] = $isRead;
+        if ($log->is_read != $isRead) {
+            $updates['is_read'] = $isRead;
+            \Log::info("Email UID $uid read status changed", ['old' => $log->is_read, 'new' => $isRead]);
+        }
+        
+        // Always check if folder has changed (not just in unified mode)
+        // This handles cases where emails are moved to different folders/labels
+        $currentFolderId = $folderId;
+        
+        // If unified sync or no folder specified, determine the correct folder
+        if ($isUnified || !$currentFolderId) {
+            $currentFolderId = $this->mapEmailToFolder($server, $overview, $folderId);
+        }
+        
+        if ($log->folder_id != $currentFolderId) {
+            $updates['folder_id'] = $currentFolderId;
+            \Log::info("Email UID $uid moved to different folder", [
+                'old_folder_id' => $log->folder_id, 
+                'new_folder_id' => $currentFolderId
+            ]);
+        }
+
         // Optionally update threading info if missing
         if (!$log->message_id && $messageId) $updates['message_id'] = $messageId;
         if (!$log->thread_id) $updates['thread_id'] = $threadId;
@@ -1117,16 +1274,24 @@ private function syncEmail($imap, $server, $uid)
         return false;
     }
 
-    $body = $this->getEmailBody($imap, $uid);
+    //$body = $this->getEmailBody($imap, $uid);
 
     $mailLog = $this->createLog(
         $server->organization_id,
         $server->id,
         auth()->id(), // Note: If running via job, this might be null. distinct check needed if scheduled.
-        'incoming',
-        $server->username,
-        $overview->from ?? null,
-        $overview->subject ?? null,
+        
+        // Determine Direction based on Sender
+        (stripos((!empty($overview->from) ? $overview->from : ''), $server->username) !== false) ? 'outgoing' : 'incoming',
+        
+        // Recipient (To)
+        // If outgoing, use the "To" header. If incoming, default to server username (or could use "To" header too, but preserving logic for now)
+        (stripos((!empty($overview->from) ? $overview->from : ''), $server->username) !== false) 
+            ? (!empty($overview->to) ? (string) imap_utf8($overview->to) : '') 
+            : $server->username,
+            
+        !empty($overview->from) ? (string) imap_utf8($overview->from) : null,
+        !empty($overview->subject) ? (string) imap_utf8($overview->subject) : null,
         'success',
         null,
         [
@@ -1135,13 +1300,15 @@ private function syncEmail($imap, $server, $uid)
             'date'       => $overview->date ?? null,
             'folder'     => $server->folder ?? 'INBOX'
         ],
-        $body,
+        null,
         $uid,
         $isRead,
         $messageId,
         $inReplyTo,
         $references,
-        $threadId
+        $threadId,
+        null, // tracking_token
+        $folderId // passing folderId here
     );
 
     // Handle Attachments
@@ -1377,7 +1544,8 @@ private function createMailRelation($mailLog, $module, $recordId)
         if (!isset($structure->parts)) {
             // Check if it's text
             if ($structure->type == 0) { // 0 = TEXT
-                return $this->fetchAndDecode($imap, $uid, $partNumber, $structure->encoding);
+                $charset = $this->getCharsetFromParameters($structure->parameters ?? []);
+                return $this->fetchAndDecode($imap, $uid, $partNumber, $structure->encoding, $charset);
             }
             return null;
         }
@@ -1390,17 +1558,31 @@ private function createMailRelation($mailLog, $module, $recordId)
         // 1. Try to find HTML part
         foreach ($flattenedParts as $part) {
             if ($part['subtype'] === 'HTML') {
-                return $this->fetchAndDecode($imap, $uid, $part['number'], $part['encoding']);
+                $charset = $this->getCharsetFromParameters($part['parameters']);
+                return $this->fetchAndDecode($imap, $uid, $part['number'], $part['encoding'], $charset);
             }
         }
 
         // 2. Fallback to Plain Text
         foreach ($flattenedParts as $part) {
             if ($part['subtype'] === 'PLAIN') {
-                return $this->fetchAndDecode($imap, $uid, $part['number'], $part['encoding']);
+                $charset = $this->getCharsetFromParameters($part['parameters']);
+                return $this->fetchAndDecode($imap, $uid, $part['number'], $part['encoding'], $charset);
             }
         }
 
+        return null;
+    }
+
+    private function getCharsetFromParameters($parameters)
+    {
+        if (!empty($parameters)) {
+            foreach ($parameters as $p) {
+                if (isset($p->attribute) && strtolower($p->attribute) === 'charset') {
+                    return $p->value;
+                }
+            }
+        }
         return null;
     }
 
@@ -1418,14 +1600,15 @@ private function createMailRelation($mailLog, $module, $recordId)
                     'number' => $number,
                     'type'   => $part->type,
                     'subtype'=> $part->subtype,
-                    'encoding' => $part->encoding
+                    'encoding' => $part->encoding,
+                    'parameters' => $part->parameters ?? []
                 ];
             }
         }
         return $flattened;
     }
 
-    private function fetchAndDecode($imap, $uid, $partNumber, $encoding)
+    private function fetchAndDecode($imap, $uid, $partNumber, $encoding, $charset = null)
     {
         // If partNumber is null, it's the whole body (for non-multipart)
         $content = $partNumber 
@@ -1436,12 +1619,23 @@ private function createMailRelation($mailLog, $module, $recordId)
 
         switch ($encoding) {
             case 3: // BASE64
-                return base64_decode($content);
+                $content = base64_decode($content);
+                break;
             case 4: // QUOTED-PRINTABLE
-                return quoted_printable_decode($content);
-            default:
-                return $content;
+                $content = quoted_printable_decode($content);
+                break;
         }
+
+        if ($charset && strtoupper($charset) !== 'UTF-8') {
+            try {
+                $content = mb_convert_encoding($content, 'UTF-8', $charset);
+            } catch (\Throwable $e) {
+                // Keep original if conversion fails
+                \Log::warning("Charset conversion failed for charset: $charset");
+            }
+        }
+
+        return $content;
     }
 
 
@@ -1470,7 +1664,7 @@ private function createMailRelation($mailLog, $module, $recordId)
 			'created_at' => now(),
 			'deleted' => 0
 		]);
-		}
+    }
 
     public function saveAttachment($mailLogId, $orgId, $attachmentData)
     {
@@ -1489,6 +1683,115 @@ private function createMailRelation($mailLog, $module, $recordId)
         ]);
 
         return $attachment->id;
+    }
+    public function syncAllFolders(string $imapServerId, int $limitPerFolder = 20, ?string $orgId = null): array
+    {
+        $server = $this->getImapServerOrFail($imapServerId, $orgId);
+        
+        // Check if we can use Unified Sync (All Mail / Archive)
+        $sourceId = $this->getUnifiedSourceFolderId($server->id);
+        if ($sourceId) {
+            return $this->syncUnified($imapServerId, $limitPerFolder, $orgId);
+        }
+
+        // Find all folders for this server
+        $folders = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $server->id)
+            ->where('deleted', 0)
+            ->orderBy('sort_order', 'asc')
+            ->get();
+
+        $results = [];
+
+        if ($folders->isEmpty()) {
+            // Fallback to inbox if no folders registered yet (though usually they are synced earlier)
+            $results['INBOX'] = $this->fetchImapInbox($imapServerId, $limitPerFolder, $orgId);
+        } else {
+            foreach ($folders as $folder) {
+                try {
+                    $results[$folder->name] = $this->fetchImapInbox($imapServerId, $limitPerFolder, $orgId, $folder);
+                } catch (\Throwable $e) {
+                    \Log::error("Failed to sync folder {$folder->name} for server {$imapServerId}: " . $e->getMessage());
+                    $results[$folder->name] = ['error' => $e->getMessage()];
+                }
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Unified Sync: Fetches from a single "All Mail" source and maps to local folders.
+     */
+    public function syncUnified(string $imapServerId, int $limit = 20, ?string $orgId = null): array
+    {
+        $server = $this->getImapServerOrFail($imapServerId, $orgId);
+        $folderId = $this->getUnifiedSourceFolderId($server->id);
+        
+        if (!$folderId) {
+            return $this->syncAllFolders($imapServerId, $limit, $orgId);
+        }
+
+        $folder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::find($folderId);
+        
+        // Fetch from source folder
+        $results = $this->fetchImapInbox($imapServerId, $limit, $orgId, $folder, true);
+        
+        return ['UNIFIED' => $results];
+    }
+
+    /**
+     * Helper to find the best source folder for Unified Sync
+     */
+    private function getUnifiedSourceFolderId(string $serverId): ?string
+    {
+        // Prefer "All Mail" (Gmail) or "Archive"
+        $folder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $serverId)
+            ->where('deleted', 0)
+            ->where(function($q) {
+                $q->where('name', 'like', '%All Mail%')
+                  ->orWhere('name', 'like', '%Archive%')
+                  ->orWhere('slug', 'all-mail')
+                  ->orWhere('slug', 'archive');
+            })
+            ->first();
+
+        return $folder ? $folder->id : null;
+    }
+
+    /**
+     * Heuristic to determine which folder an email should belong to.
+     */
+    private function mapEmailToFolder($server, $overview, $folderId)
+    {
+        // 1. If it's already a specific folder (not All Mail), return it
+        $sourceFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::find($folderId);
+        if ($sourceFolder && !str_contains(strtolower($sourceFolder->name), 'all mail') && !str_contains(strtolower($sourceFolder->name), 'archive')) {
+            return $folderId;
+        }
+
+        // 2. Identify "Sent" folder
+        if ($overview->from && stripos($overview->from, $server->username) !== false) {
+            $sentFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $server->id)
+                ->where('type', 'system')
+                ->where(function($q) {
+                    $q->where('name', 'like', '%Sent%')
+                      ->orWhere('slug', 'sent');
+                })
+                ->first();
+            
+            if ($sentFolder) return $sentFolder->id;
+        }
+
+        // 3. Fallback to Inbox
+        $inboxFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $server->id)
+            ->where('type', 'system')
+            ->where(function($q) {
+                $q->where('name', 'like', '%Inbox%')
+                  ->orWhere('slug', 'inbox');
+            })
+            ->first();
+
+        return $inboxFolder ? $inboxFolder->id : $folderId;
     }
 }
 

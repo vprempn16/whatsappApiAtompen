@@ -12,7 +12,7 @@ class MailLabel extends Model
     protected $keyType = 'string';
 
     protected $fillable = [
-        'id', 'organization_id', 'user_id',
+        'id', 'organization_id', 'user_id','mail_server_id',
         'name', 'color', 'description', 'deleted'
     ];
 

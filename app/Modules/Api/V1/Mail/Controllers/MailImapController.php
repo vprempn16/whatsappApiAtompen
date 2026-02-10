@@ -72,6 +72,8 @@ class MailImapController extends Controller
         }
 
         $validator = Validator::make($data, [
+            'name' => 'required|string',
+            'description' => 'nullable|string',
             'host' => 'required|string',
             'port' => 'required|integer',
             'encryption' => 'required|string',
@@ -111,12 +113,16 @@ class MailImapController extends Controller
         }
 
         $validator = Validator::make($data, [
+            'name' => 'required|string',
+            'description' => 'nullable|string',
             'host' => 'required|string',
             'port' => 'required|integer',
             'encryption' => 'required|string',
             'username' => 'required|string',
             'password' => 'nullable|string', // Optional on update
             'folder' => 'required|string',
+	    'last_uid' =>  'nullable|integer',
+	    'min_uid' => 'nullable|integer',
         ]);
 
         if ($validator->fails()) {
@@ -174,9 +180,9 @@ class MailImapController extends Controller
             
             $limit = $request->get('limit', 20);
            
-            $mails = $this->mailService->fetchImapInbox($id, $limit);
+            $mails = $this->mailService->syncAllFolders($id, $limit);
 
-            return $this->success($mails, 'Inbox fetched successfully');
+            return $this->success($mails, 'Mailbox synced successfully');
         } catch (\Throwable $e) {
             return $this->error($e->getMessage());
         }
