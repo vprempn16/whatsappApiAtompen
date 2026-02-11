@@ -11,6 +11,7 @@ use App\Services\Mail\MailService;
 use App\Traits\ResultTrait;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+
 class MailboxController extends Controller
 {
     use ResultTrait;
@@ -22,6 +23,53 @@ class MailboxController extends Controller
     {
         $this->mailboxService = $mailboxService;
         $this->mailService = $mailService;
+    }
+
+    /**
+     * Sync All Folders for a server
+     */
+    public function syncAll(Request $request, $mailServerId)
+    {
+        $orgId = auth()->user()->organization_id;
+        if (!$orgId) return $this->error('Organization not found');
+
+        try {
+            $limit = $request->get('limit', 20);
+            
+            // If folder_id is passed in data/query, we might want to branch, 
+            // but user specifically asked for separation.
+            
+            $results = $this->mailService->syncAllFolders($mailServerId, $limit, $orgId);
+
+            return $this->success($results, 'All folders synced successfully');
+        } catch (\Throwable $e) {
+            return $this->error('Failed to sync all folders: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Sync Specific Folder
+     */
+    public function syncFolder(Request $request, $mailServerId, $folderId)
+    {
+        $orgId = auth()->user()->organization_id;
+        if (!$orgId) return $this->error('Organization not found');
+
+        try {
+            $limit = $request->get('limit', 20);
+
+            // Get folder details via MailboxService
+            $folder = $this->mailboxService->getFolderDefination($folderId, $orgId);
+            if (!$folder) {
+                return $this->error('Folder not found');
+            }
+
+            $results = $this->mailService->fetchImapInbox($mailServerId, $limit, $orgId, $folder);
+
+            return $this->success($results, "Folder '{$folder->name}' synced successfully");
+        } catch (\Throwable $e) {
+            return $this->error('Failed to sync folder: ' . $e->getMessage());
+        }
     }
 
     /**

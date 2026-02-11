@@ -174,19 +174,19 @@ class MailImapController extends Controller
     /**
      * Fetch inbox mails
      */
+    // Inbox method removed - moved to MailboxController@syncAll as per refactoring plan
+    /*
     public function inbox(Request $request, $id)
     {
         try {
-            
             $limit = $request->get('limit', 20);
-           
             $mails = $this->mailService->syncAllFolders($id, $limit);
-
             return $this->success($mails, 'Mailbox synced successfully');
         } catch (\Throwable $e) {
             return $this->error($e->getMessage());
         }
     }
+    */
 
     /**
      * Search emails

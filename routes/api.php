@@ -181,6 +181,8 @@ Route::prefix('v1')->middleware('api')->group(function () {
         // Core
 
         Route::get('inbox', [MailboxController::class, 'index']);
+        Route::get('sync_all/{mailServerId}', [MailboxController::class, 'syncAll']);
+        Route::get('{mailServerId}/folder/{folderId}/sync', [MailboxController::class, 'syncFolder']);
         Route::get('email/{id}', [MailboxController::class, 'show']);
         Route::post('compose', [MailboxController::class, 'send']);
         Route::post('bulk-action', [MailboxController::class, 'bulkAction']);
@@ -209,7 +211,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
         Route::get('imap-servers', [MailboxController::class, 'getImapServers']);
         Route::get('{mailServerId}/folders', [MailboxController::class, 'getFolders']);
         Route::get('{mailServerId}/all', [MailboxController::class, 'getAllEmails']);
-        Route::get('{mailServerId}/{folderIdentifier}', [MailboxController::class, 'getEmailsInFolder']);
+        Route::get('{mailServerId}/folders/{folderIdentifier}', [MailboxController::class, 'getEmailsInFolder']);
     });
 
         // ========================================

@@ -772,7 +772,7 @@ class MailService{
             'is_unified' => $isUnified
         ]);
 
-        dd($total);
+        
 		$syncedCount = 0;
         $highestUid = $lastUid ?? 0;
         $lowestUid = $minUid;
@@ -857,7 +857,7 @@ class MailService{
         // Only run state refresh when forward sync is COMPLETE (lowestUid will be null)
         // This prevents syncing newest emails during progressive forward sync
         if ($lowestUid === null && $lastUid && $lastUid > 0 && $total > 0) {
-            $refreshLimit = min(50, $total);
+            $refreshLimit = min(100, $total);
             $refreshStart = max(1, $total - $refreshLimit + 1);
             
             \Log::info("IMAP State Refresh", [
@@ -1158,7 +1158,7 @@ public function getThreadMails(string $imapServerId, string $threadId): array
  * Helper to sync a single email
  */
     private function syncEmail($imap, $server, $uid, $folderId = null, bool $isUnified = false)
-{
+    {
     $overviews = imap_fetch_overview($imap, $uid, FT_UID);
     if (empty($overviews)) return false;
     $overview = $overviews[0];
@@ -1181,6 +1181,7 @@ public function getThreadMails(string $imapServerId, string $threadId): array
     }
 
     $isRead = !empty($overview->seen) ? 1 : 0;
+    $isStarred = !empty($overview->flagged) ? 1 : 0;
     
     // Extract headers for threading
     $inReplyTo = $overview->in_reply_to ?? null;
@@ -1241,20 +1242,22 @@ public function getThreadMails(string $imapServerId, string $threadId): array
     // Optimization: Just stick to finding parents.
 
     // If exists, update read status and folder if changed
+    // Determine folder
+    $currentFolderId = $folderId;
+    if ($isUnified || !$currentFolderId) {
+        $currentFolderId = $this->mapEmailToFolder($server, $overview, $folderId);
+    }
+
     if ($log) {
         $updates = [];
         if ($log->is_read != $isRead) {
             $updates['is_read'] = $isRead;
             \Log::info("Email UID $uid read status changed", ['old' => $log->is_read, 'new' => $isRead]);
         }
-        
-        // Always check if folder has changed (not just in unified mode)
-        // This handles cases where emails are moved to different folders/labels
-        $currentFolderId = $folderId;
-        
-        // If unified sync or no folder specified, determine the correct folder
-        if ($isUnified || !$currentFolderId) {
-            $currentFolderId = $this->mapEmailToFolder($server, $overview, $folderId);
+
+        if ($log->is_starred != $isStarred) {
+            $updates['is_starred'] = $isStarred;
+            \Log::info("Email UID $uid star status changed", ['old' => $log->is_starred, 'new' => $isStarred]);
         }
         
         if ($log->folder_id != $currentFolderId) {
@@ -1308,7 +1311,8 @@ public function getThreadMails(string $imapServerId, string $threadId): array
         $references,
         $threadId,
         null, // tracking_token
-        $folderId // passing folderId here
+        $currentFolderId,
+        $isStarred
     );
 
     // Handle Attachments
@@ -1639,7 +1643,7 @@ private function createMailRelation($mailLog, $module, $recordId)
     }
 
 
-    private function createLog($orgId, $serverId, $userId, $direction, $to, $from, $subject, $status, $error = null, array $info = null, $body = null, $imapUid = null, $isRead = 0, $messageId = null, $inReplyTo = null, $references = null, $threadId = null, $trackingToken = null, $folderId = null) {
+    private function createLog($orgId, $serverId, $userId, $direction, $to, $from, $subject, $status, $error = null, array $info = null, $body = null, $imapUid = null, $isRead = 0, $messageId = null, $inReplyTo = null, $references = null, $threadId = null, $trackingToken = null, $folderId = null, $isStarred = 0) {
 		return MailLog::create([
 			'id' => (string) Str::uuid(),
 			'organization_id' => $orgId,
@@ -1656,6 +1660,7 @@ private function createMailRelation($mailLog, $module, $recordId)
             'references' => $references,
             'thread_id' => $threadId,
             'folder_id' => $folderId,
+            'is_starred' => $isStarred,
             'tracking_token' => $trackingToken,
 			'is_read' => $isRead,
 			'status' => $status,
@@ -1763,13 +1768,19 @@ private function createMailRelation($mailLog, $module, $recordId)
      */
     private function mapEmailToFolder($server, $overview, $folderId)
     {
-        // 1. If it's already a specific folder (not All Mail), return it
+        // 1. If it's already a specific folder (not a catch-all), return it
         $sourceFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::find($folderId);
-        if ($sourceFolder && !str_contains(strtolower($sourceFolder->name), 'all mail') && !str_contains(strtolower($sourceFolder->name), 'archive')) {
-            return $folderId;
+        if ($sourceFolder) {
+            $name = strtolower($sourceFolder->name);
+            $isCatchAll = str_contains($name, 'all mail') || str_contains($name, 'archive') || $sourceFolder->slug == 'all_mail';
+            
+            // If it's a specific folder (Inbox, Sent, Trash, or any Label), keep it
+            if (!$isCatchAll) {
+                return $folderId;
+            }
         }
 
-        // 2. Identify "Sent" folder
+        // 2. Identify "Sent" folder for emails in catch-all folders
         if ($overview->from && stripos($overview->from, $server->username) !== false) {
             $sentFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $server->id)
                 ->where('type', 'system')
@@ -1782,7 +1793,7 @@ private function createMailRelation($mailLog, $module, $recordId)
             if ($sentFolder) return $sentFolder->id;
         }
 
-        // 3. Fallback to Inbox
+        // 3. Fallback to Inbox for catch-all emails
         $inboxFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $server->id)
             ->where('type', 'system')
             ->where(function($q) {

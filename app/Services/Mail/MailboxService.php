@@ -35,6 +35,17 @@ class MailboxService
     }
 
     /**
+     * Get folder definition by ID
+     */
+    public function getFolderDefination(string $folderId, string $orgId): ?MailboxFolder
+    {
+        return MailboxFolder::where('id', $folderId)
+            ->where('organization_id', $orgId)
+            ->where('deleted', 0)
+            ->first();
+    }
+
+    /**
      * Create folder
      */
 
