@@ -20,14 +20,14 @@ class LabelController extends Controller
         $this->mailboxService = $mailboxService;
     }
 
-    public function index(Request $request)
+    public function listByServer(string $mailServerId)
     {
         $orgId = auth()->user()->organization_id;
-        $mailServerId = $request->input('mail_server_id');
 
-        $validator = Validator::make($mailServerId, [
+        $validator = Validator::make(['mail_server_id' => $mailServerId], [
             'mail_server_id' => 'required|uuid',
         ]);
+
 
         if ($validator->fails()) {
             return $this->error(collect($validator->errors()->all())->implode(','));

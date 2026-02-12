@@ -25,9 +25,21 @@ class FolderController extends Controller
     {
         $orgId = auth()->user()->organization_id;
 
-        $folders = $this->mailboxService->listFolders($orgId,$mailServerId);
+        $validator = Validator::make(['mail_server_id' => $mailServerId], [
+            'mail_server_id' => 'required|uuid',
+        ]);
 
-        return $this->success($folders, 'Folders retrieved');
+        if ($validator->fails()) {
+            return $this->error(collect($validator->errors()->all())->implode(','));
+        }
+
+
+        try {
+            $folders = $this->mailboxService->listFolders($orgId,$mailServerId);
+            return $this->success($folders, 'Folders retrieved');
+        } catch (\Throwable $e) {
+            return $this->error('Failed to retrieve folders: ' . $e->getMessage());
+        }
     }
 
     public function sync(Request $request) 

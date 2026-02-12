@@ -18,6 +18,20 @@ class Kernel extends ConsoleKernel
             ->withoutOverlapping()
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/zapier-import.log'));
+
+        // Fetch All Mails (Unified or Inbox) every minute
+        $schedule->command('mail:sync-all-mails')
+            ->everyMinute()
+            ->withoutOverlapping()
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/mail-sync-all-mails.log'));
+
+        // Fetch Mail Folders
+        $schedule->command('mail:fetch-folders')
+            ->everyMinute()
+            ->withoutOverlapping()
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/mail-fetch-folders.log'));
     }
 
     /**

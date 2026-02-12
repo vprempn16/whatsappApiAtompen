@@ -43,12 +43,18 @@ class MailLog extends Model
         'created_at',
         'updated_at',
         'deleted',
-        'attachment_id'   // New
+        'attachment_id',   // New
+        'snoozed_until'
     ];
 
     public function folder()
     {
         return $this->belongsTo(\App\Modules\Api\V1\Mailbox\Models\MailboxFolder::class, 'folder_id');
+    }
+
+    public function mailServer()
+    {
+        return $this->belongsTo(MailImapServer::class, 'mail_server_id');
     }
 
     public function labels()

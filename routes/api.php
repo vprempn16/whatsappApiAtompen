@@ -147,72 +147,69 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			// Security
 			Route::post('/security/rotate-token', [SecurityController::class, 'rotateToken']);
 		});
-	Route::prefix('settings/outgoing-server')->group(function () {
-		Route::get('/servers', [MailServerController::class, 'index']);
-		Route::post('/new', [MailServerController::class, 'store']);
-		Route::get('/{id}', [MailServerController::class, 'show']);
-		Route::post('/{id}', [MailServerController::class, 'update']);
-		Route::delete('/{id}', [MailServerController::class, 'destroy']);
-		Route::post('/{id}/connect', [MailServerController::class, 'connect']);
-		Route::patch('/{id}/set-outgoing', [MailServerController::class, 'setOutgoing']);
-	});
+		Route::prefix('settings/outgoing-server')->group(function () {
+			Route::get('/servers', [MailServerController::class, 'index']);
+			Route::post('/new', [MailServerController::class, 'store']);
+			Route::get('/{id}', [MailServerController::class, 'show']);
+			Route::post('/{id}', [MailServerController::class, 'update']);
+			Route::delete('/{id}', [MailServerController::class, 'destroy']);
+			Route::post('/{id}/connect', [MailServerController::class, 'connect']);
+			Route::patch('/{id}/set-outgoing', [MailServerController::class, 'setOutgoing']);
+		});
 
-	Route::prefix('mail')->group(function () {   
-		Route::post('/send', [MailSendController::class, 'send']);
-		
-		Route::get('imap/{id}/inbox', [MailImapController::class, 'inbox']);
-		Route::get('imap/{id}/thread/{threadId}', [MailImapController::class, 'showThread']);
-		Route::get('imap/{id}/search', [MailImapController::class, 'search']);
-	});
+		Route::prefix('mail')->group(function () {   
+			Route::post('/send', [MailSendController::class, 'send']);
+			Route::get('imap/{id}/thread/{threadId}', [MailImapController::class, 'showThread']);
+			Route::get('imap/{id}/search', [MailImapController::class, 'search']);
+		});
 
-	Route::prefix('settings/mail/imap')->group(function () {
-		Route::get('/', [MailImapController::class, 'index']);
-		Route::post('/new', [MailImapController::class, 'store']);
-		Route::get('/{id}', [MailImapController::class, 'show']);
-		Route::post('/{id}', [MailImapController::class, 'update']);
-		Route::delete('/{id}', [MailImapController::class, 'destroy']);
-		Route::post('/{id}/connect', [MailImapController::class, 'connect']);
-	});
+		Route::prefix('settings/mail/imap')->group(function () {
+			Route::get('/', [MailImapController::class, 'index']);
+			Route::post('/new', [MailImapController::class, 'store']);
+			Route::get('/{id}', [MailImapController::class, 'show']);
+			Route::post('/{id}', [MailImapController::class, 'update']);
+			Route::delete('/{id}', [MailImapController::class, 'destroy']);
+			Route::post('/{id}/connect', [MailImapController::class, 'connect']);
+		});
 
-    // ========================================
-    // Mailbox (Unified)
-    // ========================================
-    Route::prefix('mailbox')->group(function () {
-        // Core
+		// ========================================
+		// Mailbox (Unified)
+		// ========================================
+		Route::prefix('mailbox')->group(function () {
+			// Core
 
-        Route::get('inbox', [MailboxController::class, 'index']);
-        Route::get('sync_all/{mailServerId}', [MailboxController::class, 'syncAll']);
-        Route::get('{mailServerId}/folder/{folderId}/sync', [MailboxController::class, 'syncFolder']);
+			Route::get('inbox', [MailboxController::class, 'index']);
+			Route::get('sync_all/{mailServerId}', [MailboxController::class, 'syncAll']);
+			        Route::get('{mailServerId}/{folderId}/sync', [MailboxController::class, 'syncFolder']);
         Route::get('email/{id}', [MailboxController::class, 'show']);
         Route::post('compose', [MailboxController::class, 'send']);
         Route::post('bulk-action', [MailboxController::class, 'bulkAction']);
-        
-        // Sent
-        
+        Route::post('action', [MailboxController::class, 'bulkAction']); // Alias for single action with single ID in array
 
-        // Folders by server
-        Route::post('folders/sync', [FolderController::class, 'sync']);
-		Route::get('folders/server/{mailServerId}', [FolderController::class,'listByServer']);
-		
-		Route::post('drafts/new', [DraftController::class, 'store']);
-		Route::post('drafts/{id}', [DraftController::class, 'update']);
-		Route::delete('drafts/{id}', [DraftController::class, 'destroy']);
-		Route::get('drafts/{id}', [DraftController::class, 'show']);
-		Route::get('drafts/server/{mailServerId}', [DraftController::class, 'index']);
-        // Resources
-        Route::resource('folders', FolderController::class);
-		
-        Route::resource('labels', LabelController::class);
+			// Folders by server
+			Route::post('folders/sync', [FolderController::class, 'sync']);
+			Route::get('folders/server/{mailServerId}', [FolderController::class,'listByServer']);
+
+			Route::post('drafts/new', [DraftController::class, 'store']);
+			Route::post('drafts/{id}', [DraftController::class, 'update']);
+			Route::delete('drafts/{id}', [DraftController::class, 'destroy']);
+			Route::get('drafts/{id}', [DraftController::class, 'show']);
+			Route::get('drafts/server/{mailServerId}', [DraftController::class, 'index']);
+			// Resources
+			Route::resource('folders', FolderController::class);
+			Route::get('labels/server/{mailServerId}', [LabelController::class,'listByServer']);
+
+			Route::resource('labels', LabelController::class);
 
 
-        Route::resource('signatures', SignatureController::class);
+			Route::resource('signatures', SignatureController::class);
 
-        // New Mailbox Endpoints
-        Route::get('imap-servers', [MailboxController::class, 'getImapServers']);
-        Route::get('{mailServerId}/folders', [MailboxController::class, 'getFolders']);
-        Route::get('{mailServerId}/all', [MailboxController::class, 'getAllEmails']);
-        Route::get('{mailServerId}/folders/{folderIdentifier}', [MailboxController::class, 'getEmailsInFolder']);
-    });
+			// New Mailbox Endpoints
+			Route::get('imap-servers', [MailboxController::class, 'getImapServers']);
+			Route::get('{mailServerId}/folders', [MailboxController::class, 'getFolders']);
+			Route::get('{mailServerId}/all', [MailboxController::class, 'getAllEmails']);
+			Route::get('{mailServerId}/folders/{folderIdentifier}', [MailboxController::class, 'getEmailsInFolder']);
+		});
 
         // ========================================
         // Global Search & Filters (BEFORE generic module routes)

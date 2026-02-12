@@ -279,9 +279,10 @@ class MailboxController extends Controller
         $validator = Validator::make($values, [
             'ids'            => 'required|array|min:1',
             'ids.*'          => 'uuid',
-            'action'         => 'required|string|in:delete,archive,restore,star,unstar,read,unread,move,permanent_delete',
+            'action'         => 'required|string|in:delete,archive,restore,star,unstar,read,unread,move,permanent_delete,snooze',
             'params'         => 'nullable|array',
-            'params.folder_id' => 'required_if:action,move|uuid'
+            'params.folder_id' => 'required_if:action,move|uuid',
+            'params.until'   => 'required_if:action,snooze|date_format:Y-m-d H:i:s'
         ]);
 
         if ($validator->fails()) {
