@@ -2,15 +2,12 @@
 
 namespace App\Modules\Api\V1\Mailbox\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\ApiController;
 use Illuminate\Http\Request;
 use App\Services\Mail\MailboxService;
-use App\Traits\ResultTrait;
 
-class SentController extends Controller
+class SentController extends ApiController
 {
-    use ResultTrait;
-
     protected $mailboxService;
 
     public function __construct(MailboxService $mailboxService)
@@ -33,7 +30,7 @@ class SentController extends Controller
             $result = $this->mailboxService->getSentMails($orgId, $userId, $filters, $perPage);
             return $this->success($result, 'Sent mails retrieved');
         } catch (\Throwable $e) {
-            return $this->error('Failed to retrieve sent mails: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to retrieve sent mails');
         }
     }
 
@@ -48,7 +45,7 @@ class SentController extends Controller
             $mail = $this->mailboxService->getSentMail($id, $orgId);
             return $this->success($mail, 'Sent mail details');
         } catch (\Throwable $e) {
-            return $this->error('Sent mail not found or error retrieving: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to fetch sent mail');
         }
     }
 }

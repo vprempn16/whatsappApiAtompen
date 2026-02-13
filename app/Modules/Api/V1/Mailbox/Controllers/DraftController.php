@@ -2,15 +2,12 @@
 
 namespace App\Modules\Api\V1\Mailbox\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\ApiController;
 use Illuminate\Http\Request;
 use App\Services\Mail\MailboxService;
-use App\Traits\ResultTrait;
 use Illuminate\Support\Facades\Validator;
-class DraftController extends Controller
+class DraftController extends ApiController
 {
-    use ResultTrait;
-
     protected $mailboxService;
 
     public function __construct(MailboxService $mailboxService)
@@ -28,7 +25,7 @@ class DraftController extends Controller
             $drafts = $this->mailboxService->listDrafts($orgId, $userId, $mailServerId);
             return $this->success($drafts, 'Drafts retrieved');
         } catch (\Throwable $e) {
-            return $this->error('Failed to retrieve drafts: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to retrieve drafts');
         }
     }
 
@@ -86,7 +83,7 @@ class DraftController extends Controller
             $draft = $this->mailboxService->createDraft($orgId, $userId, $data);
             return $this->success($draft, 'Draft created');
         } catch (\Throwable $e) {
-            return $this->error('Failed to create draft: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to create draft');
         }
     }
 
@@ -97,8 +94,10 @@ class DraftController extends Controller
         try {
             $draft = $this->mailboxService->getDraft($id, $orgId);
             return $this->success($draft, 'Draft details');
-        } catch (\Throwable $e) {
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return $this->error('Draft not found');
+        } catch (\Throwable $e) {
+            return $this->errorFromException($e, 'Failed to fetch draft');
         }
     }
 
@@ -155,7 +154,7 @@ class DraftController extends Controller
             $draft = $this->mailboxService->updateDraft($id, $orgId, $data);
             return $this->success($draft, 'Draft updated');
         } catch (\Throwable $e) {
-            return $this->error('Failed to update draft: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to update draft');
         }
     }
 
@@ -167,7 +166,7 @@ class DraftController extends Controller
             $this->mailboxService->deleteDraft($id, $orgId);
             return $this->success([], 'Draft deleted');
         } catch (\Throwable $e) {
-            return $this->error('Failed to delete draft: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to delete draft');
         }
     }
 }

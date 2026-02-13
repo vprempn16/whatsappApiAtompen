@@ -2,17 +2,14 @@
 
 namespace App\Modules\Api\V1\Mailbox\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\ApiController;
 use Illuminate\Http\Request;
 use App\Modules\Api\V1\Mailbox\Models\MailLabel;
-use App\Traits\ResultTrait;
 use App\Services\Mail\MailboxService;
 use Illuminate\Support\Facades\Validator;
 
-class LabelController extends Controller
+class LabelController extends ApiController
 {
-    use ResultTrait;
-    
     protected $mailboxService;
 
     public function __construct(MailboxService $mailboxService)
@@ -28,7 +25,7 @@ class LabelController extends Controller
             'mail_server_id' => 'required|uuid',
         ]);
 
-
+        
         if ($validator->fails()) {
             return $this->error(collect($validator->errors()->all())->implode(','));
         }
@@ -37,7 +34,7 @@ class LabelController extends Controller
             $labels = $this->mailboxService->listLabels($orgId, $mailServerId);
             return $this->success($labels, 'Labels retrieved');
         } catch (\Throwable $e) {
-            return $this->error('Failed to retrieve labels: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to retrieve labels');
         }
     }
 
@@ -67,7 +64,7 @@ class LabelController extends Controller
             $label = $this->mailboxService->createLabel($orgId, $userId, $validator->validated());
             return $this->success($label, 'Label created');
         } catch (\Throwable $e) {
-            return $this->error('Failed to create label: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to create label');
         }
     }
 
@@ -96,7 +93,7 @@ class LabelController extends Controller
             $label = $this->mailboxService->updateLabel($id, $orgId, $validator->validated());
             return $this->success($label, 'Label updated');
         } catch (\Throwable $e) {
-            return $this->error('Failed to update label: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to update label');
         }
     }
 
@@ -104,7 +101,7 @@ class LabelController extends Controller
     {
         $orgId = auth()->user()->organization_id;
 
-        $validator = Validator::make($id, [
+        $validator = Validator::make(['id' => $id], [
             'id' => 'required|uuid',
         ]);
 
@@ -118,7 +115,7 @@ class LabelController extends Controller
             $this->mailboxService->deleteLabel($id, $orgId);
             return $this->success([], 'Label deleted');
         } catch (\Throwable $e) {
-            return $this->error('Failed to delete label: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to delete label');
         }
     }
 }

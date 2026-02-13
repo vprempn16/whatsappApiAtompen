@@ -2,18 +2,14 @@
 
 namespace App\Modules\Api\V1\Mail\Controllers;
 
-use App\Http\Controllers\Controller;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use App\Models\FieldModelManager;
 use App\Http\Controllers\ApiController;
-use App\Traits\ResultTrait;
 use App\Services\Mail\MailService;
 use Illuminate\Support\Facades\Validator;
-class MailServerController extends Controller
+class MailServerController extends ApiController
 {
-    use ResultTrait;
-
     protected $service;
 
     public function __construct(MailService $service)
@@ -88,7 +84,7 @@ class MailServerController extends Controller
             $server = $this->service->createOutgoingServer($data);
             return $this->success($server, 'Mail server created successfully');
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to create mail server');
         }
     }
 
@@ -133,7 +129,7 @@ class MailServerController extends Controller
             $server = $this->service->updateOutgoingServer($id, $data);
             return $this->success($server, 'Mail server updated successfully');
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to update mail server');
         }
     }
 
@@ -149,7 +145,7 @@ class MailServerController extends Controller
             $server = $this->service->getOutgoingServer($id, $orgId);
             return $this->success($server, 'Mail server details fetched');
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to fetch mail server details');
         }
     }
 
@@ -182,7 +178,7 @@ class MailServerController extends Controller
 		    $this->service->setOutgoingServer($id, $orgId);
 		    return $this->success([], 'Outgoing server configured');
 	    } catch (\Exception $e) {
-		    return $this->error($e->getMessage());
+		    return $this->errorFromException($e, 'Failed to configure outgoing server');
 	    }
     }
     
@@ -198,7 +194,8 @@ class MailServerController extends Controller
         $result = $this->service->connectServer($id, $orgId);
 
         if ($result['status'] === 'failed') {
-            return $this->error($result['error']);
+            // Do not expose internal implementation details to frontend.
+            return $this->error('Server connection failed');
         }
 
         return $this->success([], 'Server connected successfully');

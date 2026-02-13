@@ -2,18 +2,15 @@
 
 namespace App\Modules\Api\V1\Mailbox\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\ApiController;
 use Illuminate\Http\Request;
 use App\Modules\Api\V1\Mailbox\Models\MailboxFolder;
-use App\Traits\ResultTrait;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 use App\Services\Mail\MailboxService;
 use Illuminate\Support\Facades\Validator;
-class FolderController extends Controller
+class FolderController extends ApiController
 {
-    use ResultTrait;
-
     protected $mailboxService;
 
     public function __construct(MailboxService $mailboxService)
@@ -44,7 +41,6 @@ class FolderController extends Controller
 
     public function sync(Request $request) 
     {
-        //dd($request->all());
         $orgId = auth()->user()->organization_id;
         $userId = auth()->id();
 
@@ -73,7 +69,7 @@ class FolderController extends Controller
             );
             return $this->success($result, 'Mailbox structure synced successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to sync mailbox structure');
         }
     }
 
@@ -99,10 +95,14 @@ class FolderController extends Controller
             return $this->error(collect($validator->errors()->all())->implode(','));
         }
 
+        $data = $validator->validated();
 
-        $folder = $this->mailboxService->createFolder($orgId, $userId, $data);
-
-        return $this->success($folder, 'Folder created');
+        try {
+            $folder = $this->mailboxService->createFolder($orgId, $userId, $data);
+            return $this->success($folder, 'Folder created');
+        } catch (\Throwable $e) {
+            return $this->errorFromException($e, 'Failed to create folder');
+        }
     }
 
 
@@ -132,7 +132,7 @@ class FolderController extends Controller
     {
         $orgId = auth()->user()->organization_id;
 
-        $validator = Validator::make($id, [
+        $validator = Validator::make(['id' => $id], [
             'id' => 'required|uuid',
         ]);
 
@@ -146,7 +146,7 @@ class FolderController extends Controller
             $this->mailboxService->deleteFolder($id, $orgId);
             return $this->success([], 'Folder deleted');
         } catch (\Throwable $e) {
-            return $this->error('Failed to delete folder: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to delete folder');
         }
     }
 }

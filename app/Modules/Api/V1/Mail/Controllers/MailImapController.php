@@ -2,16 +2,13 @@
 
 namespace App\Modules\Api\V1\Mail\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\ApiController;
 use Illuminate\Http\Request;
 use App\Services\Mail\MailService;
-use App\Traits\ResultTrait;
 use Illuminate\Support\Facades\Validator;
 
-class MailImapController extends Controller
+class MailImapController extends ApiController
 {
-    use ResultTrait;
-
     protected $mailService;
 
     public function __construct(MailService $mailService)
@@ -33,7 +30,7 @@ class MailImapController extends Controller
             $servers = $this->mailService->getAllImapServers($orgId);
             return $this->success($servers, 'IMAP servers fetched successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to fetch IMAP servers');
         }
     }
 
@@ -51,7 +48,7 @@ class MailImapController extends Controller
             $this->mailService->deleteImapServer($id, $orgId);
             return $this->success([], 'IMAP server deleted successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to delete IMAP server');
         }
     }
 
@@ -95,7 +92,7 @@ class MailImapController extends Controller
             $imap = $this->mailService->createImapServer($data);
             return $this->success($imap, 'IMAP server saved successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to save IMAP server');
         }
     }
 
@@ -137,7 +134,7 @@ class MailImapController extends Controller
             $imap = $this->mailService->updateImapServer($id, $data);
             return $this->success($imap, 'IMAP server updated successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to update IMAP server');
         }
     }
 
@@ -154,7 +151,7 @@ class MailImapController extends Controller
             $server = $this->mailService->getImapServer($id, $orgId);
             return $this->success($server, 'IMAP server details fetched');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to fetch IMAP server details');
         }
     }
 
@@ -167,7 +164,7 @@ class MailImapController extends Controller
             $this->mailService->connectImap($id);
             return $this->success([], 'IMAP connected successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to connect IMAP server');
         }
     }
 
@@ -183,7 +180,7 @@ class MailImapController extends Controller
             $mails = $this->mailService->syncAllFolders($id, $limit);
             return $this->success($mails, 'Mailbox synced successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to fetch inbox');
         }
     }
     */
@@ -198,7 +195,7 @@ class MailImapController extends Controller
             $mails = $this->mailService->searchMails($id, $filters);
             return $this->success($mails, 'Mails searched successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to search mails');
         }
     }
 
@@ -211,7 +208,7 @@ class MailImapController extends Controller
             $mails = $this->mailService->getThreadMails($id, $threadId);
             return $this->success($mails, 'Thread fetched successfully');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to fetch thread');
         }
     }
 

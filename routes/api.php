@@ -11,8 +11,6 @@ use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\CustomFieldController;
 
 use App\Modules\Api\V1\Activity\Controllers\ActivityController;
-use App\Modules\Api\V1\AISearch\Controllers\AIAlterQueryController;
-use App\Modules\Api\V1\AISearch\Controllers\AIQueryController;
 use App\Modules\Api\V1\Asset\Controllers\AssetController;
 use App\Modules\Api\V1\AuditLog\Controllers\AuditLogController;
 use App\Modules\Api\V1\Comment\Controllers\CommentController;
@@ -180,11 +178,11 @@ Route::prefix('v1')->middleware('api')->group(function () {
 
 			Route::get('inbox', [MailboxController::class, 'index']);
 			Route::get('sync_all/{mailServerId}', [MailboxController::class, 'syncAll']);
-			        Route::get('{mailServerId}/{folderId}/sync', [MailboxController::class, 'syncFolder']);
-        Route::get('email/{id}', [MailboxController::class, 'show']);
-        Route::post('compose', [MailboxController::class, 'send']);
-        Route::post('bulk-action', [MailboxController::class, 'bulkAction']);
-        Route::post('action', [MailboxController::class, 'bulkAction']); // Alias for single action with single ID in array
+			Route::get('{mailServerId}/folder/{folderId}/sync', [MailboxController::class, 'syncFolder']);
+			Route::get('email/{id}', [MailboxController::class, 'show']);
+			Route::post('compose', [MailboxController::class, 'send']);
+			Route::post('bulk-action', [MailboxController::class, 'bulkAction']);
+			Route::post('action', [MailboxController::class, 'bulkAction']); // Alias for single action with single ID in array
 
 			// Folders by server
 			Route::post('folders/sync', [FolderController::class, 'sync']);
@@ -199,11 +197,9 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::resource('folders', FolderController::class);
 			Route::get('labels/server/{mailServerId}', [LabelController::class,'listByServer']);
 
+			
 			Route::resource('labels', LabelController::class);
-
-
 			Route::resource('signatures', SignatureController::class);
-
 			// New Mailbox Endpoints
 			Route::get('imap-servers', [MailboxController::class, 'getImapServers']);
 			Route::get('{mailServerId}/folders', [MailboxController::class, 'getFolders']);
@@ -276,20 +272,6 @@ Route::prefix('v1')->middleware('api')->group(function () {
         // ========================================
         Route::post('Asset/new', [AssetController::class, 'createAssetDoc']);
         Route::get('leads/{id}/transform', [LeadController::class, 'transformToContact']);
-
-        // ========================================
-        // AI Search (EXCLUDED FROM TEST SCOPE)
-        // ========================================
-		Route::prefix('ai-search')->group(function () {
-			Route::post('query/generate', [AIQueryController::class, 'generate']);
-			Route::post('query/process', [AIQueryController::class, 'processQuery']);
-			Route::get('query/search', [AIQueryController::class, 'searchQuery']);
-			Route::get('query/quick-access', [AIQueryController::class, 'getQuickAccessQueries']);
-			Route::post('query/available-fields', [AIQueryController::class, 'getAvailableFields']);
-			Route::post('query/re-execute', [AIQueryController::class, 'reExecuteQuery']);
-			Route::post('query/execute-with-fields', [AIQueryController::class, 'executeWithSelectedFields']);
-			Route::post('query/alter', [AIAlterQueryController::class, 'processQuery']);
-		});
 
         // ========================================
         // Activity Specific Routes

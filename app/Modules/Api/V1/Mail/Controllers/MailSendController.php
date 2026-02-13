@@ -2,17 +2,14 @@
 
 namespace App\Modules\Api\V1\Mail\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\ApiController;
 use App\Services\Mail\MailService;
-use App\Traits\ResultTrait;
 use Illuminate\Http\Request;
 use App\Services\Mail\MailObject;
 use App\Services\CRM\RecordObject;
 
-class MailSendController extends Controller
+class MailSendController extends ApiController
 {
-    use ResultTrait;
-
     protected $service;
 
     public function __construct(MailService $service)
@@ -38,7 +35,7 @@ class MailSendController extends Controller
         );
 
         if ($result['status'] === 'failed') {
-            return $this->error($result['error']);
+            return $this->error('Failed to send mail');
         }
 
         return $this->success([], 'Mail sent successfully');
@@ -52,7 +49,7 @@ class MailSendController extends Controller
 	    $result = $this->service->sendMail($request->all());
 	    
 	    if($result['status'] === false) {
-            	return $this->error($result['error']);
+            	return $this->error('Failed to send mail');
 	    }
 
 	    return $this->success([], 'Mail sent successfully');
@@ -113,7 +110,7 @@ class MailSendController extends Controller
             $results = $mailboxService->processAndSendComplexRecipients($values, $orgId, $userId);
             return $this->success(['values' => $results], 'Emails processed');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to process and send emails');
         }
     }
     public function getEmailAddress(string $module, string $recordId)

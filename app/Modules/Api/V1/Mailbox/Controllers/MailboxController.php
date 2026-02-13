@@ -8,14 +8,12 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Services\Mail\MailboxService;
 use App\Services\Mail\MailService;
-use App\Traits\ResultTrait;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use App\Http\Controllers\ApiController;
 
-class MailboxController extends Controller
+class MailboxController extends ApiController
 {
-    use ResultTrait;
-
     protected $mailboxService;
     protected $mailService;
 
@@ -38,7 +36,8 @@ class MailboxController extends Controller
             
             // If folder_id is passed in data/query, we might want to branch, 
             // but user specifically asked for separation.
-            
+
+            // 2. Sync all folders/mails
             $results = $this->mailService->syncAllFolders($mailServerId, $limit, $orgId);
 
             return $this->success($results, 'All folders synced successfully');
@@ -108,7 +107,7 @@ class MailboxController extends Controller
 
             return $this->success($emails, 'Inbox fetched successfully');
         } catch (\Throwable $e) {
-            return $this->error('Failed to fetch inbox: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to fetch inbox');
         }
     }
 
@@ -123,12 +122,7 @@ class MailboxController extends Controller
             return $this->error('Organization not found');
         }
 
-        $values = $request->input('data.values');
-        if (!$values) {
-            $values = $request->all(); // Fallback
-        }
-
-        $validator = Validator::make($values, [
+        $validator = Validator::make(['id' => $id], [
             'id' => 'required|uuid',
         ]);
 
@@ -142,8 +136,8 @@ class MailboxController extends Controller
             return $this->success($email, 'Email details fetched');
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return $this->error('Email not found');
-        } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+        } catch (\Throwable $e) {
+            return $this->errorFromException($e, 'Failed to fetch email');
         }
     }
 
@@ -250,13 +244,13 @@ class MailboxController extends Controller
             $result = $this->mailService->sendMail($data);
             
             if ($result['status'] === false) {
-                 return $this->error($result['error']);
+                 return $this->error('Failed to send email');
             }
             
             return $this->success($result['data'], 'Email sent successfully');
 
-        } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+        } catch (\Throwable $e) {
+            return $this->errorFromException($e, 'Failed to send email');
         }
     }
 
@@ -279,10 +273,9 @@ class MailboxController extends Controller
         $validator = Validator::make($values, [
             'ids'            => 'required|array|min:1',
             'ids.*'          => 'uuid',
-            'action'         => 'required|string|in:delete,archive,restore,star,unstar,read,unread,move,permanent_delete,snooze',
+            'action'         => 'required|string|in:delete,archive,restore,star,unstar,read,unread,move,permanent_delete',
             'params'         => 'nullable|array',
             'params.folder_id' => 'required_if:action,move|uuid',
-            'params.until'   => 'required_if:action,snooze|date_format:Y-m-d H:i:s'
         ]);
 
         if ($validator->fails()) {
@@ -301,7 +294,7 @@ class MailboxController extends Controller
 
             return $this->success([], 'Bulk action applied successfully');
         } catch (\Throwable $e) {
-            return $this->error('Failed to perform bulk action: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to perform bulk action');
         }
     }
 
@@ -364,7 +357,7 @@ class MailboxController extends Controller
             
             return $this->success($results, 'Emails processed');
         } catch (\Throwable $e) {
-            return $this->error($e->getMessage());
+            return $this->errorFromException($e, 'Failed to process emails');
         }
     }
 

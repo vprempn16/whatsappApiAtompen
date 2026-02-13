@@ -2,16 +2,13 @@
 
 namespace App\Modules\Api\V1\Mailbox\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\ApiController;
 use Illuminate\Http\Request;
 use App\Services\Mail\MailboxService;
-use App\Traits\ResultTrait;
 use Illuminate\Support\Facades\Validator;
 
-class SignatureController extends Controller
+class SignatureController extends ApiController
 {
-    use ResultTrait;
-
     protected $mailboxService;
 
     public function __construct(MailboxService $mailboxService)
@@ -29,7 +26,7 @@ class SignatureController extends Controller
             $signatures = $this->mailboxService->listSignatures($orgId, $userId, $mailServerId);
             return $this->success($signatures, 'Signatures retrieved');
         } catch (\Throwable $e) {
-            return $this->error('Failed to retrieve signatures: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to retrieve signatures');
         }
     }
 
@@ -58,7 +55,7 @@ class SignatureController extends Controller
             $signature = $this->mailboxService->createSignature($orgId, $userId, $validator->validated());
             return $this->success($signature, 'Signature created');
         } catch (\Throwable $e) {
-            return $this->error('Failed to create signature: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to create signature');
         }
     }
 
@@ -86,7 +83,7 @@ class SignatureController extends Controller
             $signature = $this->mailboxService->updateSignature($id, $orgId, $validator->validated());
             return $this->success($signature, 'Signature updated');
         } catch (\Throwable $e) {
-            return $this->error('Failed to update signature: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to update signature');
         }
     }
 
@@ -98,7 +95,7 @@ class SignatureController extends Controller
             $this->mailboxService->deleteSignature($id, $orgId);
             return $this->success([], 'Signature deleted');
         } catch (\Throwable $e) {
-            return $this->error('Failed to delete signature: ' . $e->getMessage());
+            return $this->errorFromException($e, 'Failed to delete signature');
         }
     }
 }

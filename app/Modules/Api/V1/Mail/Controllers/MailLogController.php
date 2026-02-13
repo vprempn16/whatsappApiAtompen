@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 
-class MailLogController extends Controller
+use App\Http\Controllers\ApiController;
+
+class MailLogController extends ApiController
 {
     public function index($organizationId)
     {
