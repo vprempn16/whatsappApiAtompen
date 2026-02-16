@@ -715,6 +715,21 @@ class MailService{
 		return true;
 	}
 
+    private function getImapServerString($server)
+    {
+        return sprintf(
+            '{%s:%s/imap/%s}',
+            $server->host,
+            $server->port,
+            strtolower($server->encryption ?? 'ssl')
+        );
+    }
+
+    private function getFullMailboxPath($server, $folderName)
+    {
+        return $this->getImapServerString($server) . imap_utf7_encode($folderName);
+    }
+
     private function openImapConnection($server, $folder = null)
     {
         if (!$server->host || !$server->port || !$server->username || !$server->password ) {
@@ -722,17 +737,8 @@ class MailService{
         }
 
         $folderName = $folder ?? ($server->folder ?? 'INBOX');
-
-        $mailbox = sprintf(
-            '{%s:%s/imap/%s}%s',
-            $server->host,
-            $server->port,
-            strtolower($server->encryption ?? 'ssl'),
-            $folderName
-        );
-
+        $mailbox = $this->getFullMailboxPath($server, $folderName);
         $password = \Crypt::decryptString($server->password);
-
         $imap = @imap_open($mailbox, $server->username, $password);
 
         if (!$imap) {
@@ -741,6 +747,7 @@ class MailService{
 
         return $imap;
     }
+    
 	public function fetchImapInbox(string $imapServerId, int $limit = 20, ?string $orgId = null, $mailboxFolder = null, bool $isUnified = false): array
 	{
 		$server = $this->getImapServerOrFail($imapServerId, $orgId);
@@ -1260,9 +1267,12 @@ public function getThreadMails(string $imapServerId, string $threadId): array
             \Log::info("Email UID $uid star status changed", ['old' => $log->is_starred, 'new' => $isStarred]);
         }
         
-        if ($log->folder_id != $currentFolderId) {
+        if ($log->folder_id != $currentFolderId || $log->imap_uid != $uid) {
             $updates['folder_id'] = $currentFolderId;
-            \Log::info("Email UID $uid moved to different folder", [
+            $updates['imap_uid'] = $uid;
+            \Log::info("Email UID updated/moved", [
+                'old_uid' => $log->imap_uid,
+                'new_uid' => $uid,
                 'old_folder_id' => $log->folder_id, 
                 'new_folder_id' => $currentFolderId
             ]);
@@ -1282,7 +1292,7 @@ public function getThreadMails(string $imapServerId, string $threadId): array
     $mailLog = $this->createLog(
         $server->organization_id,
         $server->id,
-        auth()->id(), // Note: If running via job, this might be null. distinct check needed if scheduled.
+        auth()->id() ?? $server->created_by, // Use auth user if available, else server owner (background job)
         
         // Determine Direction based on Sender
         (stripos((!empty($overview->from) ? $overview->from : ''), $server->username) !== false) ? 'outgoing' : 'incoming',
@@ -1321,7 +1331,70 @@ public function getThreadMails(string $imapServerId, string $threadId): array
     // Automatically link to CRM
     $this->linkIncomingMailToCRM($mailLog);
 
+    // Sync labels (Gmail)
+    $this->syncLabelsFromOverview($server, $overview, $mailLog);
+
     return true;
+}
+
+/**
+ * Sync Gmail labels from overview to mail_email_labels pivot table
+ */
+private function syncLabelsFromOverview($server, $overview, $mailLog)
+{
+    $labels = $overview->x_gm_labels ?? null;
+    if (!$labels) return;
+
+    // labels could be string (space separated) or array
+    $labelNames = is_array($labels) ? $labels : explode(' ', $labels);
+    $syncedLabelIds = [];
+
+    foreach ($labelNames as $labelName) {
+        $labelName = trim($labelName);
+        if (empty($labelName)) continue;
+
+        // Skip system flags that are not labels but look like them (e.g. \Seen, \Flagged are in flags, but sometimes appear here)
+        // Actually Gmail labels like \Inbox, \Sent are important.
+        
+        // Find or create label in MailLabel
+        // We only sync user labels to MailLabel, but Gmail system labels are also useful for folder mapping.
+        // The user said: "Label sync includes only user-defined labels". 
+        // So we filter out system labels for the MailLabel sync.
+        
+        $isSystem = false;
+        $nameForCheck = strtolower($labelName);
+        if (str_contains($nameForCheck, '\\inbox') || str_contains($nameForCheck, 'inbox')) $isSystem = true;
+        elseif (str_contains($nameForCheck, '\\sent') || str_contains($nameForCheck, 'sent')) $isSystem = true;
+        elseif (str_contains($nameForCheck, '\\trash') || str_contains($nameForCheck, 'trash') || str_contains($nameForCheck, '\\bin')) $isSystem = true;
+        elseif (str_contains($nameForCheck, '\\draft') || str_contains($nameForCheck, 'draft')) $isSystem = true;
+        elseif (str_contains($nameForCheck, '\\spam') || str_contains($nameForCheck, 'spam') || str_contains($nameForCheck, 'junk')) $isSystem = true;
+        elseif (str_contains($nameForCheck, '\\snoozed') || str_contains($nameForCheck, 'snoozed')) $isSystem = true;
+        elseif (str_contains($nameForCheck, '\\important')) $isSystem = true;
+        elseif (str_contains($nameForCheck, '\\starred')) $isSystem = true;
+
+        if ($isSystem) continue;
+
+        $slug = Str::slug($labelName);
+        $label = \App\Modules\Api\V1\Mailbox\Models\MailLabel::updateOrCreate(
+            [
+                'organization_id' => $server->organization_id,
+                'mail_server_id' => $server->id,
+                'name' => $labelName
+            ],
+            [
+                'user_id' => $server->created_by,
+                'slug' => $slug,
+                'color' => '#6B7280',
+                'deleted' => 0
+            ]
+        );
+
+        $syncedLabelIds[] = $label->id;
+    }
+
+    if (!empty($syncedLabelIds)) {
+        $mailLog->labels()->sync($syncedLabelIds);
+    }
 }
 
     private function processImapAttachments($imap, $uid, $mailLog, $orgId)
@@ -1413,181 +1486,180 @@ public function getThreadMails(string $imapServerId, string $threadId): array
         return strtolower($type . '/' . $subType);
     }
 
-/**
- * Link incoming email to CRM records (Contact/Lead)
- */
-private function linkIncomingMailToCRM($mailLog)
-{
-    // Only for incoming
-    if ($mailLog->direction !== 'incoming') return;
-    
-    $email = $this->extractEmailAddress($mailLog->from_email);
-    if (!$email) return;
+    /**
+     * Link incoming email to CRM records (Contact/Lead)
+     */
+    private function linkIncomingMailToCRM($mailLog)
+    {
+	    // Only for incoming
+	    if ($mailLog->direction !== 'incoming') return;
 
-    $orgId = $mailLog->organization_id;
-    $modules = ['Contact', 'Lead'];
+	    $email = $this->extractEmailAddress($mailLog->from_email);
+	    if (!$email) return;
 
-    foreach ($modules as $crmModuleName) {
-        try {
-            // Use FieldModelManager to get fields
-            $fieldManager = FieldModelManager::make($crmModuleName, 'EditView', true);
-            $fields = $fieldManager->getFields();
+	    $orgId = $mailLog->organization_id;
+	    $modules = ['Contact', 'Lead'];
 
-            foreach ($fields as $fieldModel) {
-                // Check if field is Email type (case insensitive)
-                if (strcasecmp($fieldModel->getFieldType(), 'email') === 0) {
-                    $tableName = $fieldModel->getTableName();
-                    $fieldName = $fieldModel->getFieldName(); // Database column name
+	    foreach ($modules as $crmModuleName) {
+		    try {
+			    // Use FieldModelManager to get fields
+			    $fieldManager = FieldModelManager::make($crmModuleName, 'EditView', true);
+			    $fields = $fieldManager->getFields();
 
-                    // Query the table
-                    $record = DB::table($tableName)
-                        ->where($fieldName, $email)
-                        ->where('organization_id', $orgId)
-                        ->where('deleted', 0)
-                        ->first();
+			    foreach ($fields as $fieldModel) {
+				    // Check if field is Email type (case insensitive)
+				    if (strcasecmp($fieldModel->getFieldType(), 'email') === 0) {
+					    $tableName = $fieldModel->getTableName();
+					    $fieldName = $fieldModel->getFieldName(); // Database column name
 
-                    if ($record) {
-                        $this->createMailRelation($mailLog, $crmModuleName, $record->id);
-                        // Continue to find other matches (other email fields or other modules)
-                    }
-                }
-            }
-        } catch (\Exception $e) {
-            // Log warning if module loading fails (e.g. module doesn't exist)
-            \Log::warning("MailService: Failed to link CRM module {$crmModuleName} - " . $e->getMessage());
-        }
-    }
-}
+					    // Query the table
+					    $record = DB::table($tableName)
+						    ->where($fieldName, $email)
+						    ->where('organization_id', $orgId)
+						    ->where('deleted', 0)
+						    ->first();
 
-/**
- * Fetch generic IMAP folders from server
- */
-public function getImapFolders(string $serverId, ?string $orgId = null): array
-{
-    $server = $this->getImapServerOrFail($serverId, $orgId);
-    $imap = $this->openImapConnection($server);
-
-    $folders = imap_list($imap, "{".$server->host."}", "*");
-    $result = [];
-
-    if (is_array($folders)) {
-        foreach ($folders as $folder) {
-            // Remove server info from name: {imap.example.com}INBOX -> INBOX
-            $name = str_replace("{".$server->host."}", "", $folder);
-            // Some servers might return {host:port/ssl...} format, imap_list returns full spec.
-            // Better to strip everything before '}'
-            $pos = strpos($folder, '}');
-            if ($pos !== false) {
-                $name = substr($folder, $pos + 1);
-            }
-            
-            // Decode modified UTF-7 (common in IMAP)
-            $name = mb_convert_encoding($name, "UTF-8", "UTF7-IMAP");
-
-            $result[] = [
-                'name' => $name,
-                'path' => $folder // Keep full path for operations if needed? usually helper handles it
-            ];
-        }
+					    if ($record) {
+						    $this->createMailRelation($mailLog, $crmModuleName, $record->id);
+						    // Continue to find other matches (other email fields or other modules)
+					    }
+				    }
+			    }
+		    } catch (\Exception $e) {
+			    // Log warning if module loading fails (e.g. module doesn't exist)
+			    \Log::warning("MailService: Failed to link CRM module {$crmModuleName} - " . $e->getMessage());
+		    }
+	    }
     }
 
-    imap_close($imap);
-    return $result;
-}
+    /**
+     * Fetch generic IMAP folders from server
+     */
+    public function getImapFolders(string $serverId, ?string $orgId = null): array
+    {
+	    $server = $this->getImapServerOrFail($serverId, $orgId);
+	    $imap = $this->openImapConnection($server);
 
-private function extractEmailAddress($string)
-{
-    // Extract email from "Name <email@example.com>" or just "email@example.com"
-    if (filter_var($string, FILTER_VALIDATE_EMAIL)) {
-        return $string;
+	    $folders = imap_list($imap, $this->getImapServerString($server), "*");
+	    $result = [];
+	    if (is_array($folders)) {
+		    foreach ($folders as $folder) {
+			    // Remove server info from name: {imap.example.com}INBOX -> INBOX
+			    $name = str_replace("{".$server->host."}", "", $folder);
+			    // Some servers might return {host:port/ssl...} format, imap_list returns full spec.
+			    // Better to strip everything before '}'
+			    $pos = strpos($folder, '}');
+			    if ($pos !== false) {
+				    $name = substr($folder, $pos + 1);
+			    }
+
+			    // Decode modified UTF-7 (common in IMAP)
+			    $name = mb_convert_encoding($name, "UTF-8", "UTF7-IMAP");
+
+			    $result[] = [
+				    'name' => $name,
+				    'path' => $folder // Keep full path for operations if needed? usually helper handles it
+			    ];
+		    }
+	    }
+
+	    imap_close($imap);
+	    return $result;
     }
-    preg_match('/<(.+)>/', $string, $matches);
-    return $matches[1] ?? null;
-}
 
-private function createMailRelation($mailLog, $module, $recordId)
-{
-    // Check if relation already exists
-    $exists = \App\Modules\Api\V1\Mail\Models\MailRelation::where('mail_log_id', $mailLog->id)
-        ->where('module', $module)
-        ->where('record_id', $recordId)
-        ->exists();
-
-    if (!$exists) {
-        \App\Modules\Api\V1\Mail\Models\MailRelation::create([
-            'id' => (string) Str::uuid(),
-            'organization_id' => $mailLog->organization_id,
-            'module' => $module,
-            'record_id' => $recordId,
-            'mail_log_id' => $mailLog->id,
-            'created_by' => $mailLog->created_by,
-            'created_at' => now(),
-            'deleted' => 0
-        ]);
-        
-        \Log::info("Linked Mail {$mailLog->id} to $module $recordId");
+    private function extractEmailAddress($string)
+    {
+	    // Extract email from "Name <email@example.com>" or just "email@example.com"
+	    if (filter_var($string, FILTER_VALIDATE_EMAIL)) {
+		    return $string;
+	    }
+	    preg_match('/<(.+)>/', $string, $matches);
+	    return $matches[1] ?? null;
     }
-}
 
-/**
- * Helper to fetch email body
- */
+    private function createMailRelation($mailLog, $module, $recordId)
+    {
+	    // Check if relation already exists
+	    $exists = \App\Modules\Api\V1\Mail\Models\MailRelation::where('mail_log_id', $mailLog->id)
+		    ->where('module', $module)
+		    ->where('record_id', $recordId)
+		    ->exists();
+
+	    if (!$exists) {
+		    \App\Modules\Api\V1\Mail\Models\MailRelation::create([
+			    'id' => (string) Str::uuid(),
+			    'organization_id' => $mailLog->organization_id,
+			    'module' => $module,
+			    'record_id' => $recordId,
+			    'mail_log_id' => $mailLog->id,
+			    'created_by' => $mailLog->created_by,
+			    'created_at' => now(),
+			    'deleted' => 0
+		    ]);
+
+		    \Log::info("Linked Mail {$mailLog->id} to $module $recordId");
+	    }
+    }
+
+    /**
+     * Helper to fetch email body
+     */
     private function getEmailBody($imap, $uid)
     {
-        $structure = imap_fetchstructure($imap, $uid, FT_UID);
-        
-        // Use a recursive helper to find the best body part
-        $body = $this->extractBody($imap, $uid, $structure);
-        
-        return $body ?: '(No Content)';
+	    $structure = imap_fetchstructure($imap, $uid, FT_UID);
+
+	    // Use a recursive helper to find the best body part
+	    $body = $this->extractBody($imap, $uid, $structure);
+
+	    return $body ?: '(No Content)';
     }
 
     private function extractBody($imap, $uid, $structure, $partNumber = null)
     {
-        // If it's a simple message with no parts
-        if (!isset($structure->parts)) {
-            // Check if it's text
-            if ($structure->type == 0) { // 0 = TEXT
-                $charset = $this->getCharsetFromParameters($structure->parameters ?? []);
-                return $this->fetchAndDecode($imap, $uid, $partNumber, $structure->encoding, $charset);
-            }
-            return null;
-        }
+	    // If it's a simple message with no parts
+	    if (!isset($structure->parts)) {
+		    // Check if it's text
+		    if ($structure->type == 0) { // 0 = TEXT
+			    $charset = $this->getCharsetFromParameters($structure->parameters ?? []);
+			    return $this->fetchAndDecode($imap, $uid, $partNumber, $structure->encoding, $charset);
+		    }
+		    return null;
+	    }
 
-        // It has parts, iterate to find the best content
-        // Priority: HTML > Plain Text
-        
-        $flattenedParts = $this->flattenParts($structure->parts, $partNumber);
-        
-        // 1. Try to find HTML part
-        foreach ($flattenedParts as $part) {
-            if ($part['subtype'] === 'HTML') {
-                $charset = $this->getCharsetFromParameters($part['parameters']);
-                return $this->fetchAndDecode($imap, $uid, $part['number'], $part['encoding'], $charset);
-            }
-        }
+	    // It has parts, iterate to find the best content
+	    // Priority: HTML > Plain Text
 
-        // 2. Fallback to Plain Text
-        foreach ($flattenedParts as $part) {
-            if ($part['subtype'] === 'PLAIN') {
-                $charset = $this->getCharsetFromParameters($part['parameters']);
-                return $this->fetchAndDecode($imap, $uid, $part['number'], $part['encoding'], $charset);
-            }
-        }
+	    $flattenedParts = $this->flattenParts($structure->parts, $partNumber);
 
-        return null;
+	    // 1. Try to find HTML part
+	    foreach ($flattenedParts as $part) {
+		    if ($part['subtype'] === 'HTML') {
+			    $charset = $this->getCharsetFromParameters($part['parameters']);
+			    return $this->fetchAndDecode($imap, $uid, $part['number'], $part['encoding'], $charset);
+		    }
+	    }
+
+	    // 2. Fallback to Plain Text
+	    foreach ($flattenedParts as $part) {
+		    if ($part['subtype'] === 'PLAIN') {
+			    $charset = $this->getCharsetFromParameters($part['parameters']);
+			    return $this->fetchAndDecode($imap, $uid, $part['number'], $part['encoding'], $charset);
+		    }
+	    }
+
+	    return null;
     }
 
     private function getCharsetFromParameters($parameters)
     {
-        if (!empty($parameters)) {
-            foreach ($parameters as $p) {
-                if (isset($p->attribute) && strtolower($p->attribute) === 'charset') {
-                    return $p->value;
-                }
-            }
-        }
-        return null;
+	    if (!empty($parameters)) {
+		    foreach ($parameters as $p) {
+			    if (isset($p->attribute) && strtolower($p->attribute) === 'charset') {
+				    return $p->value;
+			    }
+		    }
+	    }
+	    return null;
     }
 
     private function flattenParts($parts, $prefix = '', &$flattened = [])
@@ -1745,9 +1817,25 @@ private function createMailRelation($mailLog, $module, $recordId)
     }
 
     /**
+     * Syncs all mails for a server by picking the best available folder (Unified Source or Inbox).
+     */
+    public function syncAllMails(string $imapServerId, int $limit = 20, ?string $orgId = null): array
+    {
+        $server = $this->getImapServerOrFail($imapServerId, $orgId);
+        $folderId = $this->getUnifiedSourceFolderId($server->id);
+
+        if ($folderId) {
+            $folder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::find($folderId);
+            return $this->fetchImapInbox($imapServerId, $limit, $orgId, $folder, true);
+        }
+
+        return $this->fetchImapInbox($imapServerId, $limit, $orgId);
+    }
+
+    /**
      * Helper to find the best source folder for Unified Sync
      */
-    private function getUnifiedSourceFolderId(string $serverId): ?string
+    public function getUnifiedSourceFolderId(string $serverId): ?string
     {
         // Prefer "All Mail" (Gmail) or "Archive"
         $folder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $serverId)
@@ -1764,11 +1852,383 @@ private function createMailRelation($mailLog, $module, $recordId)
     }
 
     /**
+     * Synchronize a specific action with IMAP server
+     */
+    public function syncMailLogAction(string $mailLogId, string $action, ?string $orgId = null, array $params = []): bool
+    {
+        $mailLog = MailLog::where('id', $mailLogId)
+            ->where('organization_id', $orgId)
+            ->firstOrFail();
+
+        return $this->syncMailLogsAction([$mailLog->id], $action, $orgId, $params);
+    }
+
+    /**
+     * Synchronize bulk actions with IMAP server
+     */
+    public function syncMailLogsAction(array $mailLogIds, string $action, ?string $orgId = null, array $params = []): bool
+    {
+        $remainingLogs = MailLog::with(['folder'])
+            ->whereIn('id', $mailLogIds)
+            ->where('organization_id', $orgId)
+            ->get();
+
+        if ($remainingLogs->isEmpty()) return false;
+
+        $processedIds = [];
+        $maxPasses = 3;
+        $allSuccess = true;
+
+        for ($pass = 1; $pass <= $maxPasses; $pass++) {
+            if ($remainingLogs->isEmpty()) break;
+
+            // Group by server and folder
+            $grouped = [];
+            foreach ($remainingLogs as $log) {
+                $serverId = $log->mail_server_id;
+                $folderName = $this->getCurrentImapFolderName($log);
+                $grouped[$serverId][$folderName][] = $log;
+            }
+
+            $nextPassLogs = collect();
+
+            foreach ($grouped as $serverId => $folders) {
+                foreach ($folders as $folderName => $logsInFolder) {
+                    try {
+                        $server = $this->getImapServerOrFail($serverId, $orgId);
+                        $imap = $this->openImapConnection($server, $folderName);
+
+                        $validUids = [];
+                        foreach ($logsInFolder as $log) {
+                            $uid = $this->validateAndCorrectUid($imap, $log, $folderName);
+                            if ($uid) {
+                                $validUids[] = $uid;
+                                $processedIds[] = $log->id;
+                            } else {
+                                // Potentially found in another folder and state updated.
+                                // Re-fetch to get new folder/UID for next pass.
+                                $recheckedLog = $log->fresh(['folder']);
+                                if ($recheckedLog) {
+                                    $nextPassLogs->push($recheckedLog);
+                                }
+                            }
+                        }
+
+                        if (!empty($validUids)) {
+                            $uidString = implode(',', array_filter($validUids));
+                            \Log::info("Pass {$pass}: Syncing action {$action} for UIDs {$uidString} in folder {$folderName}");
+
+                            $result = false;
+                            switch ($action) {
+                                case 'read':
+                                    $result = imap_setflag_full($imap, $uidString, "\\Seen", ST_UID);
+                                    break;
+                                case 'unread':
+                                    $result = imap_clearflag_full($imap, $uidString, "\\Seen", ST_UID);
+                                    break;
+                                case 'star':
+                                    $result = imap_setflag_full($imap, $uidString, "\\Flagged", ST_UID);
+                                    break;
+                                case 'unstar':
+                                    $result = imap_clearflag_full($imap, $uidString, "\\Flagged", ST_UID);
+                                    break;
+                                case 'delete':
+                                    $trashFolder = $this->getSystemFolder($serverId, 'trash') ?: 'Trash';
+                                    $result = @imap_mail_move($imap, $uidString, $trashFolder, CP_UID);
+                                    if (!$result) {
+                                        @imap_createmailbox($imap, $this->getFullMailboxPath($server, $trashFolder));
+                                        $result = @imap_mail_move($imap, $uidString, $trashFolder, CP_UID);
+                                    }
+                                    break;
+                                case 'permanent_delete':
+                                    $result = imap_delete($imap, $uidString, FT_UID);
+                                    break;
+                                case 'archive':
+                                    $archiveFolder = $this->getSystemFolder($serverId, 'archive') ?: 'Archive';
+                                    $result = @imap_mail_move($imap, $uidString, $archiveFolder, CP_UID);
+                                    break;
+                                case 'move':
+                                    if (isset($params['folder_name'])) {
+                                        $result = @imap_mail_move($imap, $uidString, $params['folder_name'], CP_UID);
+                                        if (!$result) {
+                                            @imap_createmailbox($imap, $this->getFullMailboxPath($server, $params['folder_name']));
+                                            $result = @imap_mail_move($imap, $uidString, $params['folder_name'], CP_UID);
+                                        }
+                                    }
+                                    break;
+                                /*
+                                case 'snooze':
+                                    $snoozeFolder = $this->getSystemFolder($serverId, 'snoozed') ?: 'Snoozed';
+                                    if ($folderName !== $snoozeFolder) {
+                                        $result = @imap_mail_move($imap, $uidString, $snoozeFolder, CP_UID);
+                                        if (!$result) {
+                                            @imap_createmailbox($imap, $this->getFullMailboxPath($server, $snoozeFolder));
+                                            $result = @imap_mail_move($imap, $uidString, $snoozeFolder, CP_UID);
+                                        }
+                                    } else {
+                                        $result = true;
+                                    }
+                                    break;
+                                */
+                                case 'restore':
+                                    if ($folderName !== 'INBOX') {
+                                        $result = @imap_mail_move($imap, $uidString, 'INBOX', CP_UID);
+                                    } else {
+                                        $result = true;
+                                    }
+                                    break;
+                            }
+
+                            if (in_array($action, ['delete', 'permanent_delete', 'archive', 'move', 'restore', 'read', 'unread'])) {
+                                imap_expunge($imap);
+                            }
+                            
+                            \Log::info("IMAP action '{$action}' in '{$folderName}' result: " . ($result ? 'success' : 'failed'));
+                        }
+
+                        imap_close($imap);
+                    } catch (\Throwable $e) {
+                        \Log::error("IMAP action {$action} failed in pass {$pass} for folder {$folderName}: " . $e->getMessage());
+                    }
+                }
+            }
+
+            // Prepare logs for next pass (only those not yet processed and successfully updated)
+            $remainingLogs = $nextPassLogs->filter(function ($l) use ($processedIds) {
+                return !in_array($l->id, $processedIds);
+            })->unique('id');
+        }
+
+        return count($processedIds) > 0;
+    }
+
+    /**
+     * Verifies if a UID is still valid in a mailbox, and if not, attempts to find the correct one.
+     */
+    private function validateAndCorrectUid($imap, MailLog $log, string $currentFolderName)
+    {
+        // 1. Initial check in current folder
+        $overview = @imap_fetch_overview($imap, $log->imap_uid, FT_UID);
+        if (!empty($overview)) {
+            return $log->imap_uid;
+        }
+
+        \Log::info("UID {$log->imap_uid} not found in {$currentFolderName} for log {$log->id}. Attempting recovery via Message-ID.");
+
+        if (!$log->message_id) {
+            return null;
+        }
+
+        // 2. Try recovery via Message-ID in INBOX first (most likely place if it was never moved)
+        if ($currentFolderName !== 'INBOX') {
+            try {
+                $inboxImap = $this->openImapConnection($log->mailServer, 'INBOX');
+                $newUid = $this->findUidByMessageId($inboxImap, $log->message_id);
+                if ($newUid) {
+                    $log->update(['imap_uid' => $newUid, 'folder_id' => null, 'trashed_at' => null, 'archived_at' => null, 'snoozed_until' => null]);
+                    \Log::info("Recovered UID {$newUid} in INBOX for log {$log->id}");
+                    imap_close($inboxImap);
+                    return null;
+                }
+                imap_close($inboxImap);
+            } catch (\Throwable $e) {}
+        }
+
+        // 3. Try Trash/Archive folders
+        $foldersToSearch = [
+            $this->getSystemFolder($log->mail_server_id, 'trash') ?: 'Trash',
+            $this->getSystemFolder($log->mail_server_id, 'archive') ?: 'Archive',
+            $this->getSystemFolder($log->mail_server_id, 'snoozed') ?: 'Snoozed'
+        ];
+
+        foreach ($foldersToSearch as $searchFolder) {
+            if (!$searchFolder || $searchFolder === $currentFolderName) continue;
+            try {
+                $searchImap = $this->openImapConnection($log->mailServer, $searchFolder);
+                $newUid = $this->findUidByMessageId($searchImap, $log->message_id);
+                if ($newUid) {
+                    // Update state based on where we found it
+                    $isTrash = str_contains(strtolower($searchFolder), 'trash') || str_contains(strtolower($searchFolder), 'bin');
+                    $isArchive = str_contains(strtolower($searchFolder), 'archive') || str_contains(strtolower($searchFolder), 'all mail');
+                    
+                    $log->update([
+                        'imap_uid' => $newUid,
+                        'trashed_at' => $isTrash ? now() : null,
+                        'archived_at' => $isArchive ? now() : null,
+                        'folder_id' => (!$isTrash && !$isArchive) ? $log->folder_id : null,
+                        'snoozed_until' => null // Clear snooze if found elsewhere
+                    ]);
+
+                    \Log::info("Recovered UID {$newUid} in {$searchFolder} for log {$log->id}");
+                    imap_close($searchImap);
+                    return null;
+                }
+                imap_close($searchImap);
+            } catch (\Throwable $e) {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+/**
+ * Robustly finds a UID by Message-ID, falling back to manual scan if imap_search fails.
+ */
+private function findUidByMessageId($imap, $messageId)
+{
+    if (!$messageId) return null;
+
+    // Try imap_search (fastest)
+    // We suppress errors because some servers don't support HEADER Message-ID
+    $searchString = 'HEADER Message-ID "' . $messageId . '"';
+    $search = @imap_search($imap, $searchString, SE_UID);
+    
+    if (!empty($search)) {
+        return $search[0];
+    }
+
+    // If search failed or was rejected, perform a manual scan of recent messages
+    // This is a fallback for servers like the one we're debugging
+    \Log::info("imap_search failed for Message-ID, falling back to manual scan.");
+
+    $check = imap_check($imap);
+    if (!$check || $check->Nmsgs === 0) return null;
+
+    $total = $check->Nmsgs;
+    $batchSize = 200; // Scan last 200 messages
+    $start = max(1, $total - $batchSize + 1);
+    $range = "{$start}:{$total}";
+
+    $overviews = @imap_fetch_overview($imap, $range);
+    if (empty($overviews)) return null;
+
+    // overviews come in ASC order, we should probably check them all
+    foreach ($overviews as $msg) {
+        if (($msg->message_id ?? '') === $messageId) {
+            return $msg->uid;
+        }
+    }
+
+    return null;
+}
+
+    private function getSystemFolder($serverId, $type)
+    {
+        $folders = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $serverId)
+            ->where('deleted', 0)
+            ->get();
+
+        // 1. Priority: Exact slug match
+        $match = $folders->firstWhere('slug', $type);
+        if ($match) return $match->name;
+
+        // 2. Priority: System folders with flexible name matching
+        $match = $folders->where('type', 'system')->first(function ($f) use ($type) {
+            $name = strtolower($f->name);
+            if ($type === 'trash') {
+                return str_contains($name, 'trash') || str_contains($name, 'bin') || str_contains($name, 'deleted');
+            }
+            if ($type === 'archive') {
+                return str_contains($name, 'archive') || str_contains($name, 'all mail');
+            }
+            if ($type === 'snoozed') {
+                return str_contains($name, 'snoozed');
+            }
+            return false;
+        });
+
+        if ($match) return $match->name;
+
+        // 3. Fallback: Any folder with partially matching name (Legacy)
+        // This handles cases where 'type' might not be synced as 'system' yet
+        $match = $folders->first(function ($f) use ($type) {
+             $name = strtolower($f->name);
+             if ($type === 'trash') return str_contains($name, 'trash');
+             if ($type === 'archive') return str_contains($name, 'archive') || str_contains($name, 'all mail');
+             if ($type === 'snoozed') return str_contains($name, 'snoozed');
+             return false;
+        });
+
+        return $match ? $match->name : null;
+    }
+
+    /**
+     * Determines the actual IMAP folder name where the email is currently located.
+     */
+    private function getCurrentImapFolderName(MailLog $log)
+    {
+        // 1. If it has a specific folder assigned
+        if ($log->folder_id) {
+            $folder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::find($log->folder_id);
+            if ($folder) return $folder->name;
+        }
+
+        // 2. Check virtual states
+        if ($log->trashed_at) {
+            return $this->getSystemFolder($log->mail_server_id, 'trash') ?: 'Trash';
+        }
+
+        if ($log->archived_at) {
+             // For Gmail, archive is usually All Mail. For others, it might be Archive.
+            return $this->getSystemFolder($log->mail_server_id, 'archive') ?: 'Archive';
+        }
+
+        if ($log->snoozed_until) {
+            return $this->getSystemFolder($log->mail_server_id, 'snoozed') ?: 'Snoozed';
+        }
+
+        // 3. Default to INBOX
+        return 'INBOX';
+    }
+
+    /**
      * Heuristic to determine which folder an email should belong to.
      */
     private function mapEmailToFolder($server, $overview, $folderId)
     {
-        // 1. If it's already a specific folder (not a catch-all), return it
+        // 1. Check Gmail Labels first for better accuracy
+        $labels = $overview->x_gm_labels ?? null;
+        if ($labels) {
+            $labelNames = is_array($labels) ? $labels : explode(' ', $labels);
+            
+            // Priority list for system folders based on Gmail labels
+            $systemMapping = [
+                '\\Inbox' => 'inbox',
+                'INBOX' => 'inbox',
+                '\\Sent' => 'sent',
+                'Sent' => 'sent',
+                '\\Drafts' => 'draft',
+                'Drafts' => 'draft',
+                '\\Trash' => 'trash',
+                'Trash' => 'trash',
+                '\\Bin' => 'trash',
+                'Bin' => 'trash',
+                '\\Spam' => 'spam',
+                'Spam' => 'spam',
+                'Junk' => 'spam',
+                '\\Snoozed' => 'snoozed',
+                'Snoozed' => 'snoozed',
+            ];
+
+            foreach ($labelNames as $label) {
+                $label = trim($label);
+                foreach ($systemMapping as $match => $type) {
+                    if (strcasecmp($label, $match) === 0) {
+                        $folder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $server->id)
+                            ->where('type', 'system')
+                            ->where(function($q) use ($type) {
+                                $q->where('slug', $type)
+                                  ->orWhere('name', 'like', '%' . $type . '%');
+                            })
+                            ->first();
+                        if ($folder) return $folder->id;
+                    }
+                }
+            }
+        }
+
+        // 2. If it's already a specific folder (not a catch-all), return it
         $sourceFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::find($folderId);
         if ($sourceFolder) {
             $name = strtolower($sourceFolder->name);
@@ -1780,7 +2240,7 @@ private function createMailRelation($mailLog, $module, $recordId)
             }
         }
 
-        // 2. Identify "Sent" folder for emails in catch-all folders
+        // 3. Identify "Sent" folder for emails in catch-all folders based on From address
         if ($overview->from && stripos($overview->from, $server->username) !== false) {
             $sentFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $server->id)
                 ->where('type', 'system')
@@ -1793,7 +2253,7 @@ private function createMailRelation($mailLog, $module, $recordId)
             if ($sentFolder) return $sentFolder->id;
         }
 
-        // 3. Fallback to Inbox for catch-all emails
+        // 4. Fallback to Inbox for catch-all emails
         $inboxFolder = \App\Modules\Api\V1\Mailbox\Models\MailboxFolder::where('mail_server_id', $server->id)
             ->where('type', 'system')
             ->where(function($q) {
@@ -1803,6 +2263,47 @@ private function createMailRelation($mailLog, $module, $recordId)
             ->first();
 
         return $inboxFolder ? $inboxFolder->id : $folderId;
+    }
+
+    /**
+     * Get mails related to a specific module record.
+     *
+     * @param string $module
+     * @param string $recordId
+     * @param int $perPage
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     */
+    public function getMailsByRecord(string $orgId, string $module, string $recordId, int $perPage = 20){
+        
+    $perPage = max(1, min(100, $perPage));
+
+    $paginator = \App\Modules\Api\V1\Mail\Models\MailLog::with(['folder', 'labels', 'attachments'])
+        ->where('organization_id', $orgId)
+        ->where('deleted', 0)
+        ->whereHas('mailRelations', function ($q) use ($module, $recordId, $orgId) {
+            $q->where('organization_id', $orgId)
+              ->where('module', $module)
+              ->where('record_id', $recordId)
+              ->where('deleted', 0);
+        })
+        ->orderBy('created_at', 'desc')
+        ->paginate($perPage);
+
+    return [
+        'emails' => $paginator->items(),
+        'meta' => [
+            'current_page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+        ],
+        'links' => [
+            'first' => $paginator->url(1),
+            'last' => $paginator->url($paginator->lastPage()),
+            'prev' => $paginator->previousPageUrl(),
+            'next' => $paginator->nextPageUrl(),
+        ],
+    ];
     }
 }
 

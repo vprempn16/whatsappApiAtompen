@@ -27,11 +27,16 @@ class MailboxService
      */
      public function listFolders(string $orgId,string $mailServerId)
     {
-        return MailboxFolder::where('organization_id', $orgId)
+        $folders = MailboxFolder::where('organization_id', $orgId)
             ->where('deleted', 0)
             ->where('mail_server_id', $mailServerId)
             ->orderBy('sort_order')
             ->get();
+
+        return $folders->map(function ($folder) {
+            $folder->label = $this->formatMailboxName($folder->name);
+            return $folder;
+        });
     }
 
     /**
@@ -106,7 +111,7 @@ class MailboxService
         return true;
     }
 
-     public function listLabels(string $orgId, ?string $mailServerId = null)
+    public function listLabels(string $orgId, ?string $mailServerId = null)
     {
         $query = MailLabel::where('organization_id', $orgId)
             ->where('deleted', 0);
@@ -115,7 +120,12 @@ class MailboxService
             $query->where('mail_server_id', $mailServerId);
         }
 
-        return $query->orderBy('created_at', 'desc')->get();
+        $labels = $query->orderBy('created_at', 'desc')->get();
+
+        return $labels->map(function ($label) {
+            $label->label = $this->formatMailboxName($label->name);
+            return $label;
+        });
     }
 
     /**
@@ -181,7 +191,11 @@ class MailboxService
     {
         $query = MailLog::with(['folder', 'labels', 'attachments'])
             ->where('organization_id', $orgId)
-            ->where('deleted', 0);
+            ->where('deleted', 0)
+            ->where(function ($q) {
+                $q->whereNull('snoozed_until')
+                  ->orWhere('snoozed_until', '<=', now());
+            });
 
         // Filter by specific mail server if requested
         if (!empty($filters['mail_server_id'])) {
@@ -227,8 +241,28 @@ class MailboxService
                   ->orWhere('body', 'like', "%{$search}%");
             });
         }
+          $paginator = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
-        return $query->orderBy('created_at', 'desc')->paginate($perPage);
+   
+
+    $emails = $paginator->items(); // plain array
+
+    return [
+        'emails' => $emails,
+        'meta' => [
+            'current_page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+        ],
+        'links' => [
+            'first' => $paginator->url(1),
+            'last' => $paginator->url($paginator->lastPage()),
+            'prev' => $paginator->previousPageUrl(),
+            'next' => $paginator->nextPageUrl(),
+        ],
+    ];
+        //return $query->orderBy('created_at', 'desc')->paginate($perPage);
     }
 
     private function applyVirtualFolderFilter($query, $slug)
@@ -252,6 +286,10 @@ class MailboxService
                 break;
             case 'starred':
                 $query->where('is_starred', 1);
+                break;
+            case 'snoozed':
+                $query->whereNotNull('snoozed_until')
+                      ->where('snoozed_until', '>', now());
                 break;
             case 'all':
                 $query->whereNull('trashed_at');
@@ -285,7 +323,23 @@ class MailboxService
     public function bulkAction(array $ids, string $action, string $orgId, array $params = [])
     {
         $query = MailLog::whereIn('id', $ids)->where('organization_id', $orgId);
-        
+
+        // Pre-processing for params needed by sync
+        if ($action === 'move' && isset($params['folder_id'])) {
+            $folder = MailboxFolder::find($params['folder_id']);
+            if ($folder) {
+                $params['folder_name'] = $folder->name;
+            }
+        }
+
+        // Sync with IMAP FIRST (to use current folder as source)
+        try {
+            $this->mailService->syncMailLogsAction($ids, $action, $orgId, $params);
+        } catch (\Throwable $e) {
+            \Log::error("MailboxService::bulkAction IMAP Sync Failed: " . $e->getMessage());
+        }
+
+        // Update Database
         switch ($action) {
             case 'delete': // Move to trash
                 $query->update(['trashed_at' => now(), 'folder_id' => null]);
@@ -294,7 +348,12 @@ class MailboxService
                 $query->update(['archived_at' => now(), 'folder_id' => null]);
                 break;
             case 'restore':
-                $query->update(['trashed_at' => null, 'archived_at' => null]);
+                $query->update([
+                    'trashed_at' => null, 
+                    'archived_at' => null, 
+                    'folder_id' => null,
+                    'snoozed_until' => null
+                ]);
                 break;
             case 'star':
                 $query->update(['is_starred' => 1]);
@@ -317,6 +376,16 @@ class MailboxService
                     ]);
                 }
                 break;
+            /*
+            case 'snooze':
+                if (isset($params['until'])) {
+                    $query->update([
+                        'snoozed_until' => $params['until'],
+                        'folder_id' => null // Or a specific snoozed folder if preferred
+                    ]);
+                }
+                break;
+            */
             case 'permanent_delete':
                 $query->update(['deleted' => 1]);
                 break;
@@ -678,6 +747,7 @@ class MailboxService
     {
     $imapFolders = $this->mailService->getImapFolders($serverId, $orgId);
     $synced = [];
+    
 
     // -------------------------------------------------------------
     // 1. SYNC FOLDERS
@@ -701,12 +771,10 @@ class MailboxService
                 $folderType = 'system';
                 $icon = 'inbox';
                 $isSystem = true;
-
             } elseif (stripos($name, 'sent') !== false || stripos($path, 'Sent') !== false) {
                 $folderType = 'system';
                 $icon = 'send';
                 $isSystem = true;
-
             } elseif (
                 stripos($name, 'trash') !== false ||
                 stripos($name, 'bin') !== false ||
@@ -716,12 +784,10 @@ class MailboxService
                 $folderType = 'system';
                 $icon = 'trash';
                 $isSystem = true;
-
             } elseif (stripos($name, 'draft') !== false || stripos($path, 'Drafts') !== false) {
                 $folderType = 'system';
                 $icon = 'file-text';
                 $isSystem = true;
-
             } elseif (
                 stripos($name, 'junk') !== false ||
                 stripos($name, 'spam') !== false ||
@@ -730,7 +796,14 @@ class MailboxService
                 $folderType = 'system';
                 $icon = 'alert-octagon';
                 $isSystem = true;
+            } elseif (stripos($name, 'snoozed') !== false || stripos($path, 'Snoozed') !== false) {
+                $folderType = 'system';
+                $icon = 'clock';
+                $isSystem = true;
             }
+
+            // [NEW] If syncing Folders, only process system folders
+            if (!$isSystem) continue;
 
             $slug = Str::slug($name);
 
@@ -742,6 +815,7 @@ class MailboxService
                 ],
                 [
                     'user_id' => $userId,
+                    'created_by' => $userId,
                     'slug' => $slug,
                     'type' => $folderType,
                     'icon' => $icon,
@@ -814,13 +888,16 @@ class MailboxService
             $path = $imapFolder['path'] ?? '';
 
             // Skip system folders
-            if (stripos($name, 'inbox') !== false || stripos($path, 'INBOX') !== false) continue;
-            if (stripos($name, 'sent') !== false || stripos($path, 'Sent') !== false) continue;
-            if (stripos($name, 'trash') !== false || stripos($path, 'Trash') !== false) continue;
-            if (stripos($name, 'bin') !== false || stripos($path, 'Bin') !== false) continue;
-            if (stripos($name, 'draft') !== false || stripos($path, 'Drafts') !== false) continue;
-            if (stripos($name, 'junk') !== false) continue;
-            if (stripos($name, 'spam') !== false || stripos($path, 'Spam') !== false) continue;
+            $isSystem = false;
+            if (stripos($name, 'inbox') !== false || stripos($path, 'INBOX') !== false) $isSystem = true;
+            elseif (stripos($name, 'sent') !== false || stripos($path, 'Sent') !== false) $isSystem = true;
+            elseif (stripos($name, 'trash') !== false || stripos($path, 'Trash') !== false) $isSystem = true;
+            elseif (stripos($name, 'bin') !== false || stripos($path, 'Bin') !== false) $isSystem = true;
+            elseif (stripos($name, 'draft') !== false || stripos($path, 'Drafts') !== false) $isSystem = true;
+            elseif (stripos($name, 'junk') !== false || stripos($name, 'spam') !== false || stripos($path, 'Spam') !== false) $isSystem = true;
+            elseif (stripos($name, 'snoozed') !== false || stripos($path, 'Snoozed') !== false) $isSystem = true;
+
+            if ($isSystem) continue;
 
             $slug = Str::slug($name);
 
@@ -843,6 +920,15 @@ class MailboxService
     }
 
     return $synced;
+}
+
+private function formatMailboxName(string $name): string
+{
+    // Remove [Gmail]/ or other bracketed prefixes
+    $formatted = preg_replace('/^\[.+\]\//', '', $name);
+    
+    // Optional: you can add more formatting here if needed
+    return $formatted;
 }
 
 }
