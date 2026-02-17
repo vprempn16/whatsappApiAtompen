@@ -617,8 +617,7 @@ class MailboxService
 		    $fieldName = $item['field'] ?? 'Unknown Field';
 		    // Handle typos/variations as per requirement
 		    $module = $item['module_nam'] ?? $item['module_name'] ?? null; 
-		    $recordId = $item['recotdI'] ?? $item['record_id'] ?? $item['recordId'] ?? null; 
-
+        $recordId = $item['recotdI'] ?? $item['record_id'] ?? $item['recordId'] ?? null;
 		    $error = null;
 
 		    // 1. Validation of Context
@@ -633,12 +632,13 @@ class MailboxService
 
 			    if (class_exists($modelClass)) {
 				    $record = $modelClass::find($recordId);
+
 				    // The user snippet uses direct fetch.
 				    if ($record) {
 					    // Check Org Access if model has checking? 
 					    // Assuming standard multitenant
 					    if (isset($record->organization_id) && $record->organization_id != $orgId) {
-						    $error = "Record access denied";
+						    $error = "Record access denied. Record Org: {$record->organization_id} vs Request Org: {$orgId}";
 					    } else {
 						    // Field lookup
 						    $fieldVal = $item['field'] ?? null;
@@ -665,7 +665,7 @@ class MailboxService
 					    $error = "Record not found";
 				    }
 			    } else {
-				    $error = "Module $module not found";
+				    $error = "Module $module not found (Class $modelClass does not exist)";
 			    }
 		    }
 
@@ -695,6 +695,8 @@ class MailboxService
 
 		    // Success -> Send
 		    $mailData = [
+                'organization_id' => $orgId,
+                'user_id' => $userId,
 			    'server_id' => $data['server_id'],
 			    'to' => $to, // String
 			    'subject' => $data['subject'] ?? 'No Subject',

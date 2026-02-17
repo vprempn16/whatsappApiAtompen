@@ -7,6 +7,8 @@ use App\Services\Mail\MailService;
 use Illuminate\Http\Request;
 use App\Services\Mail\MailObject;
 use App\Services\CRM\RecordObject;
+use App\Models\WorkflowQueue;
+use Illuminate\Support\Str;
 
 class MailSendController extends ApiController
 {
@@ -100,17 +102,27 @@ class MailSendController extends ApiController
             $values['attachments'] = $attachments;
         }
 
-        // Use MailboxService to handle complex recipient resolution and sending
-        // Note: We need MailboxService instance. MailSendController currently only has MailService.
-        // We can resolve it from container.
-        
-        $mailboxService = app(\App\Services\Mail\MailboxService::class);
-        
+        // Create Workflow Queue Item
         try {
-            $results = $mailboxService->processAndSendComplexRecipients($values, $orgId, $userId);
-            return $this->success(['values' => $results], 'Emails processed');
+            WorkflowQueue::create([
+                'id' => Str::uuid(),
+                'organization_id' => $orgId,
+                'user_id' => $userId,
+                'type' => 'send_email',
+                'params' => $values,
+                'status' => 'pending',
+                'priority' => $values['priority'] ?? 0,
+                'scheduled_at' => !empty($values['scheduled_at']) ? $values['scheduled_at'] : now(),
+                'related_module' => $module,
+                'related_record_id' => $recordId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return $this->success([], 'Email has been queued for sending.');
+
         } catch (\Throwable $e) {
-            return $this->errorFromException($e, 'Failed to process and send emails');
+            return $this->error('Failed to queue email: ' . $e->getMessage());
         }
     }
     public function getEmailAddress(string $module, string $recordId)

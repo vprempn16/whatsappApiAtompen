@@ -26,6 +26,13 @@ class Kernel extends ConsoleKernel
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/mail-sync-all-mails.log'));
 
+        // Process Workflow Queue every minute
+        $schedule->command('workflow:process')
+            ->everyMinute()
+            ->withoutOverlapping()
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/workflow-process.log'));
+
         // Fetch Mail Folders
         $schedule->command('mail:fetch-folders')
             ->everyMinute()

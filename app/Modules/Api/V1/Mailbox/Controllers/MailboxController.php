@@ -29,18 +29,25 @@ class MailboxController extends ApiController
     public function syncAll(Request $request, $mailServerId)
     {
         $orgId = auth()->user()->organization_id;
+        $userId = auth()->id();
         if (!$orgId) return $this->error('Organization not found');
 
         try {
             $limit = $request->get('limit', 20);
+            $perPage = $request->input('per_page', 20);
             
-            // If folder_id is passed in data/query, we might want to branch, 
-            // but user specifically asked for separation.
+            // 1. Sync all folders/mails
+            // We ignore the result as we want to return the standard email list
+            $this->mailService->syncAllFolders($mailServerId, $limit, $orgId);
 
-            // 2. Sync all folders/mails
-            $results = $this->mailService->syncAllFolders($mailServerId, $limit, $orgId);
+            // 2. Return standardized email list (same as getAllEmails)
+            $filters = $request->all();
+            $filters['mail_server_id'] = $mailServerId;
+            $filters['folder_id'] = 'all';
 
-            return $this->success($results, 'All folders synced successfully');
+            $emails = $this->mailboxService->getInbox($orgId, $userId, $filters, $perPage);
+            return $this->success($emails, 'All folders synced successfully');
+
         } catch (\Throwable $e) {
             return $this->error('Failed to sync all folders: ' . $e->getMessage());
         }
@@ -52,10 +59,12 @@ class MailboxController extends ApiController
     public function syncFolder(Request $request, $mailServerId, $folderId)
     {
         $orgId = auth()->user()->organization_id;
+        $userId = auth()->id();
         if (!$orgId) return $this->error('Organization not found');
 
         try {
             $limit = $request->get('limit', 20);
+            $perPage = $request->input('per_page', 20);
 
             // Get folder details via MailboxService
             $folder = $this->mailboxService->getFolderDefination($folderId, $orgId);
@@ -63,9 +72,17 @@ class MailboxController extends ApiController
                 return $this->error('Folder not found');
             }
 
-            $results = $this->mailService->fetchImapInbox($mailServerId, $limit, $orgId, $folder);
+            // 1. Sync the folder
+            $this->mailService->fetchImapInbox($mailServerId, $limit, $orgId, $folder);
 
-            return $this->success($results, "Folder '{$folder->name}' synced successfully");
+            // 2. Return standardized email list (same as getEmailsInFolder)
+            $filters = $request->all();
+            $filters['mail_server_id'] = $mailServerId;
+            $filters['folder_id'] = $folderId;
+
+            $emails = $this->mailboxService->getInbox($orgId, $userId, $filters, $perPage);
+            return $this->success($emails, "Folder '{$folder->name}' synced successfully");
+
         } catch (\Throwable $e) {
             return $this->error('Failed to sync folder: ' . $e->getMessage());
         }
@@ -228,6 +245,28 @@ class MailboxController extends ApiController
             'data_attachments_set' => isset($data['attachments'])
         ]);
 
+        // Create Workflow Queue Item
+        try {
+            \App\Models\WorkflowQueue::create([
+                'id' => \Illuminate\Support\Str::uuid(),
+                'organization_id' => $orgId,
+                'user_id' => auth()->id(),
+                'type' => 'send_email', // We use a generic type, the processor will handle complex/standard diffs
+                'params' => $data,
+                'status' => 'pending',
+                'priority' => $data['priority'] ?? 0,
+                'scheduled_at' => !empty($data['scheduled_at']) ? $data['scheduled_at'] : now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return $this->success([], 'Email has been queued for sending.');
+
+        } catch (\Throwable $e) {
+            \Log::error('Queue Email Failed', ['error' => $e->getMessage()]);
+            return $this->error('Failed to queue email: ' . $e->getMessage());
+        }
+/*
         // Branch Logic
         if ($isComplex) {
              try {
@@ -252,6 +291,7 @@ class MailboxController extends ApiController
         } catch (\Throwable $e) {
             return $this->errorFromException($e, 'Failed to send email');
         }
+*/
     }
 
     /**

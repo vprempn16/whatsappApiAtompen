@@ -56,7 +56,7 @@ class MailServerController extends ApiController
        
 
         $validator = Validator::make($values, [
-            'name'       => 'required|string|max:100',
+            //'name'       => 'required|string|max:100',
             'description'=> 'nullable|string',
             'username'   => 'required|string|max:100',
             'password'   => 'required|string',
@@ -79,7 +79,7 @@ class MailServerController extends ApiController
         $data['created_by'] = $userId;
         $data['from_name'] = $data['from_name'];
         $data['mail_type'] = $data['mail_type'];
-        
+        $data['name'] = "Test Outgoing server";
         try {
             $server = $this->service->createOutgoingServer($data);
             return $this->success($server, 'Mail server created successfully');
@@ -103,7 +103,7 @@ class MailServerController extends ApiController
         }
 
         $validator = Validator::make($values, [
-            'name'       => 'required|string|max:100',
+            //'name'       => 'required|string|max:100',
             'description'=> 'nullable|string',
             'username'   => 'required|string|max:100',
             'password'   => 'required|string', // Optional on update
@@ -124,6 +124,7 @@ class MailServerController extends ApiController
         $data['organization_id'] = $orgId;
         $data['from_name'] = $values['from_name'];
         $data['mail_type'] = $values['mail_type'];
+        $data['name'] = "Test Outgoing server";
 
         try {
             $server = $this->service->updateOutgoingServer($id, $data);

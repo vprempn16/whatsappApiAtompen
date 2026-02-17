@@ -333,8 +333,8 @@ class MailService{
 
 	public function sendMail(array $data, $module = null, $recordId = null)
 	{
-		$orgId = auth()->user()->organization_id;
-		$userId = auth()->id();
+		$orgId = $data['organization_id'] ?? auth()->user()->organization_id;
+		$userId = $data['user_id'] ?? auth()->id();
 
 		try {
 			$server = MailServer::where('id', $data['server_id'])
