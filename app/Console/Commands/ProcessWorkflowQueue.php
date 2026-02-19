@@ -8,6 +8,7 @@ use App\Services\Mail\MailboxService;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Modules\Api\V1\Workflow\Models\WorkflowLog;
 
 class ProcessWorkflowQueue extends Command
 {
@@ -33,18 +34,18 @@ class ProcessWorkflowQueue extends Command
         $job = WorkflowQueue::where('status', 'pending')
             ->where(function ($query) {
                 $query->whereNull('scheduled_at')
-                      ->orWhere('scheduled_at', '<=', now());
+                    ->orWhere('scheduled_at', '<=', now());
             })
             ->orderBy('priority', 'desc')
             ->orderBy('created_at', 'asc')
             ->first();
 
         if (!$job) {
-             $this->info('No pending jobs found.');
+            $this->info('No pending jobs found.');
             return;
         }
 
-       
+
         $job->update(['status' => 'processing', 'executed_at' => now(), 'attempts' => $job->attempts + 1]);
 
         try {
@@ -74,6 +75,16 @@ class ProcessWorkflowQueue extends Command
             $handler->handle($job);
 
             $job->update(['status' => 'completed']);
+
+            // Audit Log
+            WorkflowLog::create([
+                'organization_id' => $job->organization_id,
+                'task_id' => $job->id,
+                'status' => 'success',
+                'message' => "Successfully processed {$job->type}",
+                'executed_at' => now(),
+            ]);
+
             $this->info("Job {$job->id} ({$job->type}) processed successfully.");
 
         } catch (Exception $e) {
@@ -81,6 +92,16 @@ class ProcessWorkflowQueue extends Command
                 'status' => 'failed',
                 'error_message' => $e->getMessage()
             ]);
+
+            // Audit Log
+            WorkflowLog::create([
+                'organization_id' => $job->organization_id,
+                'task_id' => $job->id,
+                'status' => 'failed',
+                'message' => $e->getMessage(),
+                'executed_at' => now(),
+            ]);
+
             $this->error("Job {$job->id} failed: " . $e->getMessage());
         }
     }

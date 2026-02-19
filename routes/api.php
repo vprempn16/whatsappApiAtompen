@@ -37,6 +37,7 @@ use App\Modules\Api\V1\WhatsApp\Controllers\MediaController;
 use App\Modules\Api\V1\Mail\Controllers\MailServerController;
 use App\Modules\Api\V1\Mail\Controllers\MailSendController;
 use App\Modules\Api\V1\Mail\Controllers\MailImapController;
+use App\Modules\Api\V1\Mail\Controllers\MailLogController;
 
 use App\Modules\Api\V1\Zapier\Controllers\ZapierSettingsController;
 use App\Modules\Api\V1\Zapier\Controllers\ZapierImportLogController;
@@ -52,68 +53,71 @@ use App\Modules\Api\V1\Mailbox\Controllers\SearchController;
 use App\Modules\Api\V1\Mailbox\Controllers\SignatureController;
 use App\Modules\Api\V1\Mailbox\Controllers\SentController;
 
+#WORKFLOW
+use App\Modules\Api\V1\Workflow\Controllers\WorkflowController;
+
 
 
 Route::prefix('v1')->middleware('api')->group(function () {
-    // ========================================
-    // PUBLIC ROUTES (No Authentication Required)
-    // ========================================
-    // Organization creation (rate limited)
-    Route::post('organization/new', [OrganizationController::class, 'store'])
-        ->middleware('throttle:5,1');
-    	Route::post('settings/User/{id}', [UserController::class, 'store']);
+	// ========================================
+	// PUBLIC ROUTES (No Authentication Required)
+	// ========================================
+	// Organization creation (rate limited)
+	Route::post('organization/new', [OrganizationController::class, 'store'])
+		->middleware('throttle:5,1');
+	Route::post('settings/User/{id}', [UserController::class, 'store']);
 
-    // Authentication routes (rate limited to prevent brute force)
-    Route::post('login', [AuthController::class, 'login'])
-        ->middleware('throttle:5,1'); // 5 attempts per minute
-    Route::post('logout', [AuthController::class, 'logout'])
-        ->middleware('auth:sanctum');
-    Route::get('login/google', [GoogleAuthController::class, 'getSigninUrl']);
-    Route::get('login/google/callback', [GoogleAuthController::class, 'handleGoogleCallback']);
+	// Authentication routes (rate limited to prevent brute force)
+	Route::post('login', [AuthController::class, 'login'])
+		->middleware('throttle:5,1'); // 5 attempts per minute
+	Route::post('logout', [AuthController::class, 'logout'])
+		->middleware('auth:sanctum');
+	Route::get('login/google', [GoogleAuthController::class, 'getSigninUrl']);
+	Route::get('login/google/callback', [GoogleAuthController::class, 'handleGoogleCallback']);
 
-    // WhatsApp webhook (public for Meta verification)
-    Route::get('/webhooks/whatsapp', [WebhookController::class, 'verify']);
-    Route::post('/webhooks/whatsapp', [WebhookController::class, 'handle']);
+	// WhatsApp webhook (public for Meta verification)
+	Route::get('/webhooks/whatsapp', [WebhookController::class, 'verify']);
+	Route::post('/webhooks/whatsapp', [WebhookController::class, 'handle']);
 
-    // Mail Tracking (Public)
-    Route::get('/mail/track/{token}', [MailImapController::class, 'trackOpen']);
+	// Mail Tracking (Public)
+	Route::get('/mail/track/{token}', [MailImapController::class, 'trackOpen']);
 
-    // Zapier webhook (public, API-key authenticated, rate limited)
-    Route::post('zapier/webhook/{module}', [ZapierWebhookController::class, 'handle'])
-        ->middleware('throttle:60,1');
+	// Zapier webhook (public, API-key authenticated, rate limited)
+	Route::post('zapier/webhook/{module}', [ZapierWebhookController::class, 'handle'])
+		->middleware('throttle:60,1');
 
-    // ========================================
-    // PROTECTED ROUTES (Require Authentication)
-    // ========================================
+	// ========================================
+	// PROTECTED ROUTES (Require Authentication)
+	// ========================================
 	Route::middleware('auth:sanctum')->group(function () {
 
-        
-        // ========================================
-        // Custom Fields Management
-        // ========================================
-        Route::put('field-update', [CustomFieldController::class, 'updateFieldLabel']);
-        Route::get('field-details/{module}/{id}', [CustomFieldController::class, 'show']);
-        Route::delete('field/{id}', [CustomFieldController::class, 'delete']);
-        Route::post('custom-field-creation', [CustomFieldController::class, 'create']);
-        Route::get('custom-field-creation/view-fields', [CustomFieldController::class, 'createViewFields']);
-        Route::get('custom-field-creation/list', [CustomFieldController::class, 'list']);
-		
+
+		// ========================================
+		// Custom Fields Management
+		// ========================================
+		Route::put('field-update', [CustomFieldController::class, 'updateFieldLabel']);
+		Route::get('field-details/{module}/{id}', [CustomFieldController::class, 'show']);
+		Route::delete('field/{id}', [CustomFieldController::class, 'delete']);
+		Route::post('custom-field-creation', [CustomFieldController::class, 'create']);
+		Route::get('custom-field-creation/view-fields', [CustomFieldController::class, 'createViewFields']);
+		Route::get('custom-field-creation/list', [CustomFieldController::class, 'list']);
+
 		// Whatsapp Messages
-		Route::post('/{module}/{recordId}/whatsapp/send',[MessageController::class,'send']);
-		Route::get('/{module}/{recordId}/whatsapp/chat',[MessageController::class,'fetchAllChats']);
-		
+		Route::post('/{module}/{recordId}/whatsapp/send', [MessageController::class, 'send']);
+		Route::get('/{module}/{recordId}/whatsapp/chat', [MessageController::class, 'fetchAllChats']);
+
 		//Channel list
 		Route::get('/whatsapp/channels', [AccountController::class, 'getByOrg']);
-		
+
 		//Preview template
-		Route::get('/{module}/{recordId}/channel/{channelId}/template/{templateId}/whatsapp/preview',[TemplateController::class, 'previewTemplate']);
-		
+		Route::get('/{module}/{recordId}/channel/{channelId}/template/{templateId}/whatsapp/preview', [TemplateController::class, 'previewTemplate']);
+
 		Route::get('/whatsapp/{channel_id}/templates', [TemplateController::class, 'getWhatsAppTemplates']);
-        
-        // ========================================
-        // WhatsApp Integration (EXCLUDED FROM TEST SCOPE)
-        // ========================================
-		
+
+		// ========================================
+		// WhatsApp Integration (EXCLUDED FROM TEST SCOPE)
+		// ========================================
+
 		//Settings
 		Route::prefix('settings/whatsapp')->group(function () {
 			Route::get('/account-check', [AccountController::class, 'healthCheck']);
@@ -126,20 +130,20 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			// Messages
 			Route::post('/messages/validate', [MessageController::class, 'validateMessage']);
 			Route::post('/messages/{module}/{contactId}/message/whatsapp', [MessageController::class, 'sendWhatsAppMessage']);
-			Route::post('/messages/send-media/{module}/{recordId}', [MessageController::class,'sendMediaMessage']);
+			Route::post('/messages/send-media/{module}/{recordId}', [MessageController::class, 'sendMediaMessage']);
 
 			Route::post('/interactive/save', [InteractiveController::class, 'save']);
 			Route::post('/flow-messages/appointment/whatsapp', [FlowController::class, 'sendAppointmentFlow']);
 
 			// Templates
-			Route::get('/{channel_id}/templates/sync',[TemplateController::class, 'syncTemplates']);
+			Route::get('/{channel_id}/templates/sync', [TemplateController::class, 'syncTemplates']);
 			Route::get('/{channel_id}/templates', [TemplateController::class, 'getWhatsAppTemplates']);
-			Route::get('/{channel_id}/template/{template_id}/sync',[TemplateController::class, 'syncSingleTemplate']);
+			Route::get('/{channel_id}/template/{template_id}/sync', [TemplateController::class, 'syncSingleTemplate']);
 
-			Route::get('/{channel_id}/template/{template_id}',[TemplateController::class, 'templateMapping']);
-			Route::post('/{channel_id}/template/{template_id}',[TemplateController::class, 'templateMapping']);
+			Route::get('/{channel_id}/template/{template_id}', [TemplateController::class, 'templateMapping']);
+			Route::post('/{channel_id}/template/{template_id}', [TemplateController::class, 'templateMapping']);
 
-			Route::get('/templates/preview/{templateName}/{module}/{recordId}',[TemplateController::class, 'previewTemplate']);
+			Route::get('/templates/preview/{templateName}/{module}/{recordId}', [TemplateController::class, 'previewTemplate']);
 			Route::post('/templates/list-check', [TemplateController::class, 'listCheck']);
 
 			// Security
@@ -155,7 +159,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::patch('/{id}/set-outgoing', [MailServerController::class, 'setOutgoing']);
 		});
 
-		Route::prefix('mail')->group(function () {   
+		Route::prefix('mail')->group(function () {
 			Route::post('/send', [MailSendController::class, 'send']);
 			Route::get('imap/{id}/thread/{threadId}', [MailImapController::class, 'showThread']);
 			Route::get('imap/{id}/search', [MailImapController::class, 'search']);
@@ -177,8 +181,8 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			// Core
 
 			Route::get('inbox', [MailboxController::class, 'index']);
-			Route::get('sync_all/{mailServerId}', [MailboxController::class, 'syncAll']);
-			Route::get('{mailServerId}/folder/{folderId}/sync', [MailboxController::class, 'syncFolder']);
+			Route::get('sync_all/server/{mailServerId}', [MailboxController::class, 'syncAll']);
+			Route::get('server/{mailServerId}/folder/{folderId}/sync', [MailboxController::class, 'syncFolder']);
 			Route::get('email/{id}', [MailboxController::class, 'show']);
 			Route::post('compose', [MailboxController::class, 'send']);
 			Route::post('bulk-action', [MailboxController::class, 'bulkAction']);
@@ -186,7 +190,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
 
 			// Folders by server
 			Route::post('folders/sync', [FolderController::class, 'sync']);
-			Route::get('folders/server/{mailServerId}', [FolderController::class,'listByServer']);
+			Route::get('folders/server/{mailServerId}', [FolderController::class, 'listByServer']);
 
 			Route::post('drafts/new', [DraftController::class, 'store']);
 			Route::post('drafts/{id}', [DraftController::class, 'update']);
@@ -195,34 +199,34 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::get('drafts/server/{mailServerId}', [DraftController::class, 'index']);
 			// Resources
 			Route::resource('folders', FolderController::class);
-			Route::get('labels/server/{mailServerId}', [LabelController::class,'listByServer']);
+			Route::get('labels/server/{mailServerId}', [LabelController::class, 'listByServer']);
 
-			
+
 			Route::resource('labels', LabelController::class);
 			Route::resource('signatures', SignatureController::class);
 			// New Mailbox Endpoints
 			Route::get('imap-servers', [MailboxController::class, 'getImapServers']);
-			Route::get('{mailServerId}/folders', [MailboxController::class, 'getFolders']);
-			Route::get('{mailServerId}/all', [MailboxController::class, 'getAllEmails']);
-			Route::get('{mailServerId}/folders/{folderIdentifier}', [MailboxController::class, 'getEmailsInFolder']);
+			Route::get('server/{mailServerId}/folders', [MailboxController::class, 'getFolders']);
+			Route::get('server/{mailServerId}/all', [MailboxController::class, 'getAllEmails']);
+			Route::get('server/{mailServerId}/folders/{folderIdentifier}', [MailboxController::class, 'getEmailsInFolder']);
 		});
 
-        // ========================================
-        // Global Search & Filters (BEFORE generic module routes)
-        // Rate limited to prevent abuse
-        // ========================================
+		// ========================================
+		// Global Search & Filters (BEFORE generic module routes)
+		// Rate limited to prevent abuse
+		// ========================================
 		Route::post('filter/{module}', [GlobalSearchIndexController::class, 'filter'])
-            ->middleware('throttle:60,1'); // 60 requests per minute
-        Route::get('filter/{module}', [GlobalSearchIndexController::class, 'filter'])
-            ->middleware('throttle:60,1');
+			->middleware('throttle:60,1'); // 60 requests per minute
+		Route::get('filter/{module}', [GlobalSearchIndexController::class, 'filter'])
+			->middleware('throttle:60,1');
 		Route::post('global-search', [GlobalSearchIndexController::class, 'globalSearch'])
-            ->middleware('throttle:30,1'); // 30 requests per minute for global search
-        Route::get('global-search', [GlobalSearchIndexController::class, 'globalSearch'])
-            ->middleware('throttle:30,1');
+			->middleware('throttle:30,1'); // 30 requests per minute for global search
+		Route::get('global-search', [GlobalSearchIndexController::class, 'globalSearch'])
+			->middleware('throttle:30,1');
 
-        // ========================================
-        // Admin-Only Settings
-        // ========================================
+		// ========================================
+		// Admin-Only Settings
+		// ========================================
 		Route::prefix('settings')->middleware('admin.only')->group(function () {
 			// User Management
 			Route::get('User', [UserController::class, 'index']);
@@ -251,40 +255,46 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::get('profile/modules', [ProfileController::class, 'portalModules']);
 			Route::post('profile/repair', [ProfileController::class, 'repair']);
 			Route::delete('profile/{id}', [ProfileController::class, 'delete']);
+
+			// Workflow Management
+			Route::prefix('workflow')->group(function () {
+				Route::get('/', [WorkflowController::class, 'index']);
+				Route::post('/new', [WorkflowController::class, 'store']);
+			});
 		});
 
-        // ========================================
-        // Activity Management (Specific routes before generic)
-        // ========================================
+		// ========================================
+		// Activity Management (Specific routes before generic)
+		// ========================================
 		Route::get('Activity/{id}/pre-summary', [ActivityController::class, 'preSummary']);
 		Route::post('Activity/new', [ActivityController::class, 'save']);
 		Route::post('Activity/{id}/activity-status-update', [ActivityController::class, 'updateStatus']);
 
-        // ========================================
-        // Comments & Related Records
-        // ========================================
+		// ========================================
+		// Comments & Related Records
+		// ========================================
 		Route::post('comment/new', [CommentController::class, 'save']);
 		Route::get('{module}/{entity_id}/comment/records', [CommentController::class, 'getEntityComments']);
 		Route::get('{module}/{entity_id}/Activity/records', [ActivityController::class, 'getEntityActivities']);
 
-        // ========================================
-        // Asset & Lead Transformation
-        // ========================================
-        Route::post('Asset/new', [AssetController::class, 'createAssetDoc']);
-        Route::get('leads/{id}/transform', [LeadController::class, 'transformToContact']);
+		// ========================================
+		// Asset & Lead Transformation
+		// ========================================
+		Route::post('Asset/new', [AssetController::class, 'createAssetDoc']);
+		Route::get('leads/{id}/transform', [LeadController::class, 'transformToContact']);
 
-        // ========================================
-        // Activity Specific Routes
-        // ========================================
+		// ========================================
+		// Activity Specific Routes
+		// ========================================
 		Route::prefix('Activity')->group(function () {
 			Route::get('my-list', [ActivityController::class, 'myActivities']);
 			Route::get('{uuid}', [ActivityController::class, 'getActivityDetails'])
 				->where('uuid', '[0-9a-fA-F\-]{36}');
 		});
 
-        // ========================================
-        // Quotation Specific Routes
-        // ========================================
+		// ========================================
+		// Quotation Specific Routes
+		// ========================================
 		Route::prefix('Quotation')->group(function () {
 			Route::get('headers', function () {
 				return app(RecordController::class)->headerfields('Quotation');
@@ -298,9 +308,9 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::post('{id}/update-status', [QuotationController::class, 'updateStatus']);
 		});
 
-        // ========================================
-        // Invoice Specific Routes
-        // ========================================
+		// ========================================
+		// Invoice Specific Routes
+		// ========================================
 		Route::prefix('Invoice')->group(function () {
 			Route::get('headers', function () {
 				return app(RecordController::class)->headerfields('Invoice');
@@ -314,9 +324,9 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::post('{id}/update-status', [InvoiceController::class, 'updateStatus']);
 		});
 
-        // ========================================
-        // Filter Management (MUST be before generic module routes)
-        // ========================================
+		// ========================================
+		// Filter Management (MUST be before generic module routes)
+		// ========================================
 		Route::prefix('filters')->group(function () {
 			Route::get('config', [FilterController::class, 'getConfig']);
 			Route::get('/', [FilterController::class, 'index']);
@@ -329,9 +339,9 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::get('{id}/records', [FilterController::class, 'getRecords']);
 		});
 
-        // ========================================
-        // Zapier Integration (MUST be before generic module routes)
-        // ========================================
+		// ========================================
+		// Zapier Integration (MUST be before generic module routes)
+		// ========================================
 		Route::prefix('zapier')->group(function () {
 			// Settings
 			Route::get('settings', [ZapierSettingsController::class, 'show']);
@@ -357,10 +367,10 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::post('imports/{id}/retry', [ZapierImportLogController::class, 'retry']);
 		});
 
-        // ========================================
-        // GENERIC MODULE CRUD (MUST BE LAST - wildcard routes)
-        // ========================================
-		
+		// ========================================
+		// GENERIC MODULE CRUD (MUST BE LAST - wildcard routes)
+		// ========================================
+
 		Route::prefix('{module}')->group(function () {
 			Route::get('/', [RecordController::class, 'index']);
 			Route::post('{id}', [RecordController::class, 'store']);
@@ -374,11 +384,12 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::get('{id}/edit', [RecordController::class, 'edit']);
 			Route::get('{id}/audit-log', [RecordController::class, 'getAuditLogs']);
 			Route::get('{id}/{relatedmodule}/records', [RelatedRecords::class, 'index']);
-			
+
 			// Module-based mail sending
 			Route::post('{recordId}/mail/send', [MailSendController::class, 'sendFromRecord']);
 			Route::post('{recordId}/mailbox/compose', [MailboxController::class, 'composeFromRecord']);
-            Route::get('{recordId}/getEmailAddress', [MailSendController::class, 'getEmailAddress']);
+			Route::get('{recordId}/getEmailAddress', [MailSendController::class, 'getEmailAddress']);
+			Route::get('{recordId}/mails', [MailLogController::class, 'getMailsByRecord']);
 		});
 	});
 });
