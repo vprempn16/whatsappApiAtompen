@@ -20,6 +20,7 @@ class WorkflowController extends ApiController
     /**
      * Store a new workflow definition.
      */
+
     public function store(Request $request)
     {
         $orgId = auth()->user()->organization_id;
@@ -33,13 +34,23 @@ class WorkflowController extends ApiController
             'trigger.event_type' => 'required|string|in:created,updated,deleted',
             'trigger.module_name' => 'required|string',
             'conditions' => 'nullable|array',
-            'actions' => 'required|array|min:1',
+            'actions' => 'required|array|size:1',
             'actions.*.action_type_id' => 'required|uuid',
             'actions.*.params' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
             return $this->error($validator->errors()->first());
+        }
+
+        // Validate Action Type and Organization before starting transaction
+        $act = $request->actions[0];
+        $actionType = \App\Modules\Api\V1\Workflow\Models\WorkflowActionType::where('id', $act['action_type_id'])
+            ->where('organization_id', $orgId)
+            ->first();
+
+        if (!$actionType) {
+            return $this->error("Action type not found or does not belong to your organization.");
         }
 
         try {
@@ -70,14 +81,36 @@ class WorkflowController extends ApiController
                 }
             }
 
-            // 4. Create Actions
-            foreach ($request->actions as $index => $act) {
-                $workflow->actions()->create([
-                    'action_type_id' => $act['action_type_id'],
-                    'params' => $act['params'] ?? [],
-                    'execution_order' => $index,
-                ]);
+            // 4. Create Action (One)
+            // Verify module compatibility
+            $isAllowed = $actionType->modules()
+                ->where('modulename', $request->trigger['module_name'])
+                ->exists();
+
+            if (!$isAllowed) {
+                throw new \Exception("Action '{$actionType->action_label}' is not allowed for module '{$request->trigger['module_name']}'.");
             }
+
+            // Dynamic save/validation call
+
+            //dd($actionType, $class);
+            $class = $actionType->function_path;
+            if (!$class || !class_exists($class)) {
+                throw new \Exception("Action class '{$class}' not found for action type '{$actionType->action_label}'.");
+            }
+
+            $actionInstance = app($class);
+            if (!method_exists($actionInstance, 'save')) {
+                throw new \Exception("Action class '{$class}' missing 'save' method.");
+            }
+
+            $validatedParams = $actionInstance->save($act['params'] ?? [], $request->trigger['module_name'], $orgId);
+
+            $workflow->actions()->create([
+                'action_type_id' => $act['action_type_id'],
+                'params' => $validatedParams,
+                'execution_order' => 0,
+            ]);
 
             \DB::commit();
 
@@ -85,7 +118,7 @@ class WorkflowController extends ApiController
 
         } catch (\Throwable $e) {
             \DB::rollBack();
-            return $this->errorFromException($e, 'Failed to create workflow');
+            return $this->error($e->getMessage());
         }
     }
 
