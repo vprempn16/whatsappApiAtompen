@@ -2,6 +2,7 @@
 
 namespace App\Services\CRM;
 
+use App\Exceptions\PermissionDeniedException;
 use App\Models\AtomModel;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -62,10 +63,21 @@ class RecordObject
             $model = new $modelClass();
         }
 
-        // Admin bypass for permission checks
+        // Admin/System bypass for permission checks
         $user = auth()->user();
         if (!$user) {
-            throw new \Exception("Unauthenticated user");
+            if (app()->runningInConsole()) {
+                if (!empty($data) && method_exists($model, 'fill')) {
+                    $model->fill($data);
+                }
+                if (method_exists($model, 'setViewType')) {
+                    $model->setViewType($viewType);
+                } else {
+                    $model->_viewType = $viewType;
+                }
+                return $model;
+            }
+            throw new PermissionDeniedException('Authentication required.');
         }
         if ($user->is_admin !== 1) {
             $permissionService = new PermissionService($user);
@@ -78,7 +90,7 @@ class RecordObject
             };
 
             if (!$permissionService->hasPermission($module, $action)) {
-                throw new \Exception(
+                throw new PermissionDeniedException(
                     "Unauthorized: Module permission denied for {$action} on {$module}"
                 );
             }
@@ -107,7 +119,7 @@ class RecordObject
 
                     // Write permission enforced only for non-admins
                     if (!$permissionService->canWriteField($module, $fieldId)) {
-                        throw new \Exception(
+                        throw new PermissionDeniedException(
                             "Unauthorized: Field {$apiField} is readonly"
                         );
                     }

@@ -17,9 +17,6 @@ class SendEmailAction implements WorkflowActionInterface
 
     /**
      * Execute the workflow action.
-     *
-     * @param WorkflowQueue $job
-     * @return void
      */
     public function handle(WorkflowQueue $job): void
     {
@@ -51,12 +48,62 @@ class SendEmailAction implements WorkflowActionInterface
             'server_id' => $params['server_id'] ?? 'MISSING',
             'recipients_after' => $params['recipients'] ?? []
         ]);
-
-
         $this->mailboxService->processAndSendComplexRecipients(
             $params,
             $job->organization_id,
             $job->user_id
         );
+    }
+
+    /**
+     * Validate and prepare Email action parameters.
+     */
+    public function save(array $params, string $module, string $orgId): array
+    {
+        // 1. Validate Mail Server ID
+        $serverId = $params['server_id'] ?? null;
+        if (!$serverId) {
+            throw new \Exception("Mail Server ID is required.");
+        }
+
+        $server = \DB::table('mail_servers')
+            ->where('id', $serverId)
+            ->where('organization_id', $orgId)
+            ->where('deleted', 0)
+            ->first();
+
+        if (!$server) {
+            throw new \Exception("Invalid Mail Server ID or server does not belong to your organization.");
+        }
+
+        // 2. Validate Subject and Body
+        if (empty($params['subject'])) {
+            throw new \Exception("Email subject is required.");
+        }
+        if (empty($params['body'])) {
+            throw new \Exception("Email body is required.");
+        }
+
+        // 3. Validate Recipients (fields must exist in module)
+        $recipients = $params['recipients'] ?? [];
+        if (empty($recipients)) {
+            throw new \Exception("At least one recipient must be specified.");
+        }
+
+        foreach ($recipients as $recipient) {
+            $field = $recipient['field'] ?? null;
+            $recModule = $recipient['module_name'] ?? $module;
+
+            if ($field && !str_contains($field, '@')) { // If it's a field name, not a hardcoded email
+                if (
+                    !\Schema::hasColumn(\Str::snake(\Str::plural($recModule)), $field) &&
+                    !\Schema::hasColumn(\Str::snake($recModule), $field)
+                ) {
+                    throw new \Exception("Recipient field '{$field}' does not exist in module '{$recModule}'.");
+                }
+            }
+        }
+
+        return $params;
     }
 }

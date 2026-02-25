@@ -137,6 +137,7 @@ class RelationshipService
             }
 
             $foreignKey = $crmField->fieldname;
+            $apiFieldName = $crmField->apifieldname ?? lcfirst(str_replace('_', '', ucwords($foreignKey, '_')));
             $childClass = self::getModelClass($childModule);
 
             if (!class_exists($childClass)) {
@@ -154,8 +155,9 @@ class RelationshipService
 
             // Process each related record
             foreach ($relatedRecords[$relationName] as $record) {
-                // Set the foreign key
+                // Set the foreign key (both DB name and API name for fill/validation)
                 $record[$foreignKey] = $model->id;
+                $record[$apiFieldName] = $model->id;
 
                 // Normalize field names (camelCase to snake_case)
                 $record = self::normalizeFieldNames($record, $foreignKey);
@@ -237,25 +239,33 @@ class RelationshipService
             }
 
             foreach ($records as $relation) {
-                $relatedId = $relation[$config['related_key']] 
+                $rawRelatedId = $relation[$config['related_key']]
                     ?? $relation[str_replace('_', '', $config['related_key'])] // camelCase variant (entity_id -> entityId)
                     ?? $relation['entityId'] // Direct entityId
                     ?? null;
 
                 $relatedModule = $config['polymorphic']
-                    ? ($relation[$config['parent_module_column']] 
+                    ? ($relation[$config['parent_module_column']]
                         ?? $relation[lcfirst(str_replace('_', '', ucwords($config['parent_module_column'], '_')))] // camelCase (entity_type -> entityType)
                         ?? $relation['entityType'] // Direct entityType
                         ?? $module) // fallback to current module
                     : null;
 
-                if (!$relatedId || !$relatedModule) {
+                if (!$rawRelatedId || !$relatedModule) {
                     continue;
                 }
 
                 if ($pivotTable === 'activity_relations') {
                     $relatedModule = self::normalizeEntityType($relatedModule);
                 }
+
+                // Normalize related IDs:
+                // - Some clients send `entityId` as an array (multi-select). Insert one pivot row per ID.
+                // - Avoid "Array to string conversion" by never inserting arrays into scalar DB columns.
+                $relatedIds = is_array($rawRelatedId) ? array_values($rawRelatedId) : [$rawRelatedId];
+                $relatedIds = array_values(array_filter($relatedIds, function ($id) {
+                    return is_string($id) || is_int($id);
+                }));
 
                 // For polymorphic, determine the parent key value
                 // For Activity, use model->id as activity_id
@@ -268,64 +278,76 @@ class RelationshipService
                 }
 
                 if ($config['polymorphic'] && $parentKeyValue) {
-                    // Check if record already exists
-                    $exists = DB::table($pivotTable)
-                        ->where($config['parent_key'], $parentKeyValue)
-                        ->where($config['related_key'], $relatedId)
-                        ->where($config['parent_module_column'], $relatedModule)
-                        ->exists();
-
-                    // Check if table has organization_id column
-                    $hasOrgId = DB::getSchemaBuilder()->hasColumn($pivotTable, 'organization_id');
-
-                    // Prepare insert/update data
-                    $insertData = [
-                        $config['parent_key'] => $parentKeyValue,
-                        $config['related_key'] => $relatedId,
-                        $config['parent_module_column'] => $relatedModule,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ];
-
-                    // Add organization_id only if column exists
-                    if ($hasOrgId) {
-                        $insertData['organization_id'] = auth()->user()->organization_id ?? null;
+                    // `activity_relations.relation_type` is NOT NULL. Skip inserts that don't include it.
+                    if ($pivotTable === 'activity_relations' && !isset($relation['relationType']) && !isset($relation['relation_type'])) {
+                        continue;
                     }
 
-                    // Add relation_type if provided (for activity_relations)
-                    if ($pivotTable === 'activity_relations' && isset($relation['relationType'])) {
-                        $insertData['relation_type'] = $relation['relationType'];
-                    } elseif ($pivotTable === 'activity_relations' && isset($relation['relation_type'])) {
-                        $insertData['relation_type'] = $relation['relation_type'];
-                    }
+                    foreach ($relatedIds as $relatedId) {
+                        $relatedId = (string) $relatedId;
 
-                    // Add ID only for new records
-                    if (!$exists) {
-                        $insertData['id'] = (string) Str::uuid();
-                    }
+                        // Check if record already exists
+                        $exists = DB::table($pivotTable)
+                            ->where($config['parent_key'], $parentKeyValue)
+                            ->where($config['related_key'], $relatedId)
+                            ->where($config['parent_module_column'], $relatedModule)
+                            ->exists();
 
-                    // Insert/update pivot record
-                    DB::table($pivotTable)->updateOrInsert(
-                        [
+                        // Check if table has organization_id column
+                        $hasOrgId = DB::getSchemaBuilder()->hasColumn($pivotTable, 'organization_id');
+
+                        // Prepare insert/update data
+                        $insertData = [
                             $config['parent_key'] => $parentKeyValue,
                             $config['related_key'] => $relatedId,
                             $config['parent_module_column'] => $relatedModule,
-                        ],
-                        $insertData
-                    );
-                } elseif (!$config['polymorphic']) {
-                    // Non-polymorphic pivot
-                    DB::table($pivotTable)->updateOrInsert(
-                        [
-                            $config['parent_key'] => $model->id,
-                            $config['related_key'] => $relatedId,
-                        ],
-                        [
-                            'id' => (string) Str::uuid(),
                             'created_at' => now(),
                             'updated_at' => now(),
-                        ]
-                    );
+                        ];
+
+                        // Add organization_id only if column exists
+                        if ($hasOrgId) {
+                            $insertData['organization_id'] = auth()->user()->organization_id ?? ($model->organization_id ?? null);
+                        }
+
+                        // Add relation_type if provided (for activity_relations)
+                        if ($pivotTable === 'activity_relations' && isset($relation['relationType'])) {
+                            $insertData['relation_type'] = $relation['relationType'];
+                        } elseif ($pivotTable === 'activity_relations' && isset($relation['relation_type'])) {
+                            $insertData['relation_type'] = $relation['relation_type'];
+                        }
+
+                        // Add ID only for new records
+                        if (!$exists) {
+                            $insertData['id'] = (string) Str::uuid();
+                        }
+
+                        // Insert/update pivot record
+                        DB::table($pivotTable)->updateOrInsert(
+                            [
+                                $config['parent_key'] => $parentKeyValue,
+                                $config['related_key'] => $relatedId,
+                                $config['parent_module_column'] => $relatedModule,
+                            ],
+                            $insertData
+                        );
+                    }
+                } elseif (!$config['polymorphic']) {
+                    // Non-polymorphic pivot
+                    foreach ($relatedIds as $relatedId) {
+                        $relatedId = (string) $relatedId;
+                        DB::table($pivotTable)->updateOrInsert(
+                            [
+                                $config['parent_key'] => $model->id,
+                                $config['related_key'] => $relatedId,
+                            ],
+                            [
+                                'id' => (string) Str::uuid(),
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ]
+                        );
+                    }
                 }
             }
         }
@@ -488,7 +510,7 @@ class RelationshipService
     {
         // Convert camelCase to snake_case for foreign keys
         $camelCaseKey = lcfirst(str_replace('_', '', ucwords($foreignKey, '_')));
-        
+
         if (isset($record[$camelCaseKey]) && !isset($record[$foreignKey])) {
             $record[$foreignKey] = $record[$camelCaseKey];
             unset($record[$camelCaseKey]);

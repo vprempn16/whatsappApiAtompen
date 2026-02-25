@@ -53,10 +53,9 @@ use App\Modules\Api\V1\Mailbox\Controllers\SearchController;
 use App\Modules\Api\V1\Mailbox\Controllers\SignatureController;
 use App\Modules\Api\V1\Mailbox\Controllers\SentController;
 
+
 #WORKFLOW
 use App\Modules\Api\V1\Workflow\Controllers\WorkflowController;
-
-
 
 Route::prefix('v1')->middleware('api')->group(function () {
 	// ========================================
@@ -255,7 +254,6 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::get('profile/modules', [ProfileController::class, 'portalModules']);
 			Route::post('profile/repair', [ProfileController::class, 'repair']);
 			Route::delete('profile/{id}', [ProfileController::class, 'delete']);
-
 			// Workflow Management
 			Route::prefix('workflow')->group(function () {
 				Route::get('/', [WorkflowController::class, 'index']);

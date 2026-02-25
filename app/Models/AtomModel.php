@@ -186,7 +186,7 @@ class AtomModel extends Model
 		if (!empty($this->identifier)) {
 			return;
 		}
-		$orgId = auth()->user()->organization_id ?? null;
+		$orgId = $this->organization_id ?? (auth()->user()->organization_id ?? null);
 		$number = ModuleNumberingService::generateNumber($module, $orgId);
 
 		$this->identifier = $number;
@@ -202,7 +202,7 @@ class AtomModel extends Model
 		if (!Schema::hasColumn($table, 'created_by')) {
 			return;
 		}
-		$this->created_by ??= auth()->user()->id;
+		$this->created_by ??= auth()->user()->id ?? null;
 	}
 
 	private function buildHookData(): array

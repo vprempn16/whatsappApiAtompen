@@ -16,8 +16,12 @@ class WorkflowActionType extends Model
         'organization_id',
         'action_label',
         'action_type',
-        'module_name',
-        'function_path',
+        'function_class',
         'description',
     ];
+
+    public function modules()
+    {
+        return $this->belongsToMany(\App\Models\PortalModule::class, 'workflow_actiontype_module_rel', 'action_type_id', 'module_id');
+    }
 }
