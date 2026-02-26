@@ -42,6 +42,7 @@ class AtomModel extends Model
 	// SECURITY: Protect critical fields from mass assignment
 	protected $guarded = ['id', 'organization_id', 'deleted', 'created_at', 'updated_at', 'created_by'];
 	protected ?string $_viewType = null;
+	protected $originalCustomAttributes = [];
 
 	protected function getFieldModelManager(): FieldModelManager
 	{
@@ -217,9 +218,16 @@ class AtomModel extends Model
 			$newValues[$dbField] = $value;
 		}
 
+		$oldValues = $isNew ? [] : $this->getOriginal();
+		if (!$isNew) {
+			foreach ($this->originalCustomAttributes as $dbField => $value) {
+				$oldValues[$dbField] = $value;
+			}
+		}
+
 		return [
 			'new_values' => $newValues,
-			'old_values' => $isNew ? [] : $this->getOriginal(),
+			'old_values' => $oldValues,
 			'entity_id' => $this->id ?? null,
 			'module' => class_basename($this),
 			'entity_name' => class_basename($this),
@@ -389,6 +397,7 @@ class AtomModel extends Model
 		foreach ($customRows as $row) {
 			if (isset($fieldMap[$row->field_id])) {
 				$this->customAttributes[$fieldMap[$row->field_id]] = $row->field_value;
+				$this->originalCustomAttributes[$fieldMap[$row->field_id]] = $row->field_value;
 			}
 		}
 
