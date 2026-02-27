@@ -106,4 +106,42 @@ class SendEmailAction implements WorkflowActionInterface
 
         return $params;
     }
+
+    /**
+     * Define the dynamic fields required by this action type.
+     *
+     * @return array
+     */
+    public function getParamsFields(): array
+    {
+        return [
+            [
+                'name' => 'server_id',
+                'label' => 'Mail Server',
+                'type' => 'reference',
+                'module' => 'MailServer',
+                'required' => true,
+            ],
+            [
+                'name' => 'subject',
+                'label' => 'Email Subject',
+                'type' => 'string',
+                'required' => true,
+            ],
+            [
+                'name' => 'body',
+                'label' => 'Email Body',
+                'type' => 'textarea', // Or 'richtext' if your frontend supports it
+                'required' => true,
+            ],
+            [
+                'name' => 'recipients',
+                'label' => 'Recipients',
+                'type' => 'module_fields',
+                'field_types' => ['email'],
+                'multiple' => true,
+                'required' => true,
+            ]
+        ];
+    }
 }

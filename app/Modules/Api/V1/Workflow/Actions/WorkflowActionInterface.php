@@ -21,7 +21,12 @@ interface WorkflowActionInterface
      * @param string $module
      * @param string $orgId
      * @return array
-     * @throws \Exception
-     */
     public function save(array $params, string $module, string $orgId): array;
+
+    /**
+     * Define the dynamic fields required by this action type.
+     *
+     * @return array
+     */
+    public function getParamsFields(): array;
 }

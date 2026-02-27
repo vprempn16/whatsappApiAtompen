@@ -54,8 +54,9 @@ use App\Modules\Api\V1\Mailbox\Controllers\SignatureController;
 use App\Modules\Api\V1\Mailbox\Controllers\SentController;
 
 
-#WORKFLOW
 use App\Modules\Api\V1\Workflow\Controllers\WorkflowController;
+use App\Modules\Api\V1\Workflow\Controllers\WorkflowActionController;
+use App\Modules\Api\V1\Workflow\Controllers\WorkflowActionTypeController;
 
 Route::prefix('v1')->middleware('api')->group(function () {
 	// ========================================
@@ -256,8 +257,25 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::delete('profile/{id}', [ProfileController::class, 'delete']);
 			// Workflow Management
 			Route::prefix('workflow')->group(function () {
-				Route::get('/', [WorkflowController::class, 'index']);
+				Route::get('/all', [WorkflowController::class, 'index']);
+				Route::get('/new', [WorkflowController::class, 'store']); // Fallback support if needed
 				Route::post('/new', [WorkflowController::class, 'store']);
+
+				// Action Types CRUD
+				Route::get('/action_types/list', [WorkflowActionTypeController::class, 'index']);
+				Route::post('/action_types/new', [WorkflowActionTypeController::class, 'store']);
+				Route::get('/action_types/{id}', [WorkflowActionTypeController::class, 'show']);
+				Route::post('/action_types/{id}', [WorkflowActionTypeController::class, 'update']);
+				Route::delete('/action_types/{id}', [WorkflowActionTypeController::class, 'destroy']);
+
+				Route::get('/actions/types', [WorkflowActionController::class, 'getActionTypes']);
+				Route::get('/actions/list', [WorkflowActionController::class, 'index']);
+				Route::post('/actions/new', [WorkflowActionController::class, 'store']);
+				Route::get('/actions/get_params/{action_type_id}', [WorkflowActionController::class, 'getParams']);
+				Route::post('/actions/{id}', [WorkflowActionController::class, 'update']);
+				Route::delete('/actions/{id}', [WorkflowActionController::class, 'destroy']);
+				Route::post('/{id}', [WorkflowController::class, 'update']);
+				Route::get('/{module}', [WorkflowController::class, 'getByModule']);
 			});
 		});
 

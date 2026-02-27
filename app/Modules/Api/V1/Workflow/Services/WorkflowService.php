@@ -237,7 +237,6 @@ class WorkflowService
                 return false;
         }
     }
-
     /**
      * Queue workflow actions into the WorkflowQueue.
      */
@@ -288,5 +287,54 @@ class WorkflowService
         return \Illuminate\Support\Facades\DB::table('workflow_action_types')
             ->where('id', $typeId)
             ->value('action_type') ?? 'unknown';
+    }
+
+    /**
+     * Validates a Workflow Action Type payload.
+     *
+     * @param array $input Data to validate
+     * @param string $orgId Organization ID
+     * @param string|null $ignoreId ID to ignore for uniqueness (useful for updates)
+     * @return \Illuminate\Validation\Validator
+     */
+    public function validateActionType(array $input, string $orgId, ?string $ignoreId = null)
+    {
+        $rules = [
+            'action_label' => [
+                'required',
+                'string',
+                'max:255',
+                \Illuminate\Validation\Rule::unique('workflow_action_types')->where('organization_id', $orgId)
+            ],
+            'action_type' => [
+                'required',
+                'string',
+                'max:255',
+                \Illuminate\Validation\Rule::unique('workflow_action_types')->where('organization_id', $orgId)
+            ],
+            'function_path' => [
+                'required',
+                'string',
+                'max:255',
+                \Illuminate\Validation\Rule::unique('workflow_action_types')->where('organization_id', $orgId)
+            ],
+            'function_class' => [
+                'required',
+                'string',
+                'max:255',
+                \Illuminate\Validation\Rule::unique('workflow_action_types')->where('organization_id', $orgId)
+            ],
+            'description' => 'nullable|string',
+            'status' => 'nullable|boolean',
+        ];
+
+        if ($ignoreId) {
+            $rules['action_label'][3]->ignore($ignoreId);
+            $rules['action_type'][3]->ignore($ignoreId);
+            $rules['function_path'][3]->ignore($ignoreId);
+            $rules['function_class'][3]->ignore($ignoreId);
+        }
+
+        return \Illuminate\Support\Facades\Validator::make($input, $rules);
     }
 }

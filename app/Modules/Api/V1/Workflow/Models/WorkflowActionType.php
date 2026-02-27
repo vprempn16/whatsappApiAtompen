@@ -15,7 +15,9 @@ class WorkflowActionType extends Model
     protected $fillable = [
         'organization_id',
         'action_label',
+        'status',
         'action_type',
+        'function_path',
         'function_class',
         'description',
     ];
