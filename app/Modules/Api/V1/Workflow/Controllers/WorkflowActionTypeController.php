@@ -27,8 +27,26 @@ class WorkflowActionTypeController extends ApiController
                 $query->where('status', $request->input('status'));
             }
 
-            $types = $query->get();
-            return $this->success($types, 'Action types retrieved successfully');
+            $perPage = $request->input('per_page', 20);
+            $paginator = $query->paginate($perPage);
+
+            $data = [
+                'action_types' => $paginator->items(),
+                'meta' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ],
+                'links' => [
+                    'first' => $paginator->url(1),
+                    'last' => $paginator->url($paginator->lastPage()),
+                    'prev' => $paginator->previousPageUrl(),
+                    'next' => $paginator->nextPageUrl(),
+                ],
+            ];
+
+            return $this->success($data, 'Action types retrieved successfully');
         } catch (\Throwable $e) {
             return $this->errorFromException($e, 'Failed to retrieve action types');
         }

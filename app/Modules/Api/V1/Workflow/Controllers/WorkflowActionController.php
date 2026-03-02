@@ -23,8 +23,26 @@ class WorkflowActionController extends ApiController
                 $query->where('workflow_id', $request->input('workflow_id'));
             }
 
-            $actions = $query->get();
-            return $this->success($actions, 'Workflow actions retrieved successfully');
+            $perPage = $request->input('per_page', 20);
+            $paginator = $query->paginate($perPage);
+
+            $data = [
+                'actions' => $paginator->items(),
+                'meta' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ],
+                'links' => [
+                    'first' => $paginator->url(1),
+                    'last' => $paginator->url($paginator->lastPage()),
+                    'prev' => $paginator->previousPageUrl(),
+                    'next' => $paginator->nextPageUrl(),
+                ],
+            ];
+
+            return $this->success($data, 'Workflow actions retrieved successfully');
         } catch (\Throwable $e) {
             return $this->errorFromException($e, 'Failed to retrieve workflow actions');
         }

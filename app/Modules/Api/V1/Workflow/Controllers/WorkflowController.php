@@ -116,11 +116,29 @@ class WorkflowController extends ApiController
     /**
      * Get a list of workflows for the organization.
      */
-    public function index()
+    public function index(Request $request)
     {
         try {
-            $workflows = Workflow::with(['triggers', 'conditions', 'actions'])->get();
-            return $this->success($workflows, 'Workflows retrieved successfully');
+            $perPage = $request->input('per_page', 20);
+            $paginator = Workflow::with(['triggers', 'conditions', 'actions'])->paginate($perPage);
+
+            $data = [
+                'workflows' => $paginator->items(),
+                'meta' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ],
+                'links' => [
+                    'first' => $paginator->url(1),
+                    'last' => $paginator->url($paginator->lastPage()),
+                    'prev' => $paginator->previousPageUrl(),
+                    'next' => $paginator->nextPageUrl(),
+                ],
+            ];
+
+            return $this->success($data, 'Workflows retrieved successfully');
         } catch (\Throwable $e) {
             return $this->errorFromException($e, 'Failed to retrieve workflows');
         }
@@ -129,13 +147,31 @@ class WorkflowController extends ApiController
     /**
      * Get a list of workflows for a specific module.
      */
-    public function getByModule($module)
+    public function getByModule(Request $request, $module)
     {
         try {
-            $workflows = Workflow::whereHas('triggers', function ($q) use ($module) {
+            $perPage = $request->input('per_page', 20);
+            $paginator = Workflow::whereHas('triggers', function ($q) use ($module) {
                 $q->where('module_name', $module);
-            })->with(['triggers', 'conditions', 'actions'])->get();
-            return $this->success($workflows, 'Workflows retrieved successfully');
+            })->with(['triggers', 'conditions', 'actions'])->paginate($perPage);
+
+            $data = [
+                'workflows' => $paginator->items(),
+                'meta' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ],
+                'links' => [
+                    'first' => $paginator->url(1),
+                    'last' => $paginator->url($paginator->lastPage()),
+                    'prev' => $paginator->previousPageUrl(),
+                    'next' => $paginator->nextPageUrl(),
+                ],
+            ];
+
+            return $this->success($data, 'Workflows retrieved successfully');
         } catch (\Throwable $e) {
             return $this->errorFromException($e, 'Failed to retrieve workflows');
         }
