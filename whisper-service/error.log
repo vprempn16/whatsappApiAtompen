@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "/var/www/html/Atompen/whisper-service/app.py", line 3, in <module>
+    from flask import Flask, request, jsonify
+  File "/home/prematomlines/.local/lib/python3.10/site-packages/flask/__init__.py", line 6, in <module>
+    from .app import Flask as Flask
+  File "/home/prematomlines/.local/lib/python3.10/site-packages/flask/app.py", line 14, in <module>
+    import click
+  File "/home/prematomlines/.local/lib/python3.10/site-packages/click/__init__.py", line 10, in <module>
+    from .core import Argument as Argument
+  File "/home/prematomlines/.local/lib/python3.10/site-packages/click/core.py", line 31, in <module>
+    from .formatting import HelpFormatter
+  File "/home/prematomlines/.local/lib/python3.10/site-packages/click/formatting.py", line 8, in <module>
+    from .parser import _split_opt
+  File "/home/prematomlines/.local/lib/python3.10/site-packages/click/parser.py", line 48, in <module>
+    V = t.TypeVar("V")
+  File "/usr/lib/python3.10/typing.py", line 804, in __init__
+    super().__init__(bound, covariant, contravariant)
+  File "/usr/lib/python3.10/typing.py", line 728, in __init__
+    self.__covariant__ = bool(covariant)
+KeyboardInterrupt
