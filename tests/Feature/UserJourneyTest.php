@@ -2,12 +2,14 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Foundation\Testing\WithFaker;
 use Tests\TestCase;
 
 class UserJourneyTest extends TestCase
 {
+    //use DatabaseTransactions;
+
     /**
      * Test the full user journey:
      * 1. Create Organization
@@ -18,6 +20,11 @@ class UserJourneyTest extends TestCase
      */
     public function test_full_user_journey(): void
     {
+        $this->withoutExceptionHandling();
+        \Illuminate\Support\Facades\Mail::fake();
+        \Illuminate\Support\Facades\Queue::fake();
+        \Illuminate\Support\Facades\Http::fake();
+
         // 1. Create Organization
         $orgPayload = [
             'data' => [
@@ -86,16 +93,63 @@ class UserJourneyTest extends TestCase
             'Authorization' => 'Bearer ' . $token,
         ];
 
-        // 4. Create a Lead
+        // 4. Create a Workflow (Commented out until branch merge)
+        /*
+        $workflowPayload = [
+            "name" => "Welcome Email for John or Admin",
+            "description" => "Sends a welcome email if conditions are met",
+            "trigger" => [
+                "event_type" => "created",
+                "module_name" => "Lead"
+            ],
+            "conditions" => [
+                [
+                    "field_name" => "firstName",
+                    "operator" => "contains",
+                    "value" => "John",
+                    "logic" => "AND"
+                ],
+                [
+                    "field_name" => "email",
+                    "operator" => "starts_with",
+                    "value" => "prem",
+                    "logic" => "AND"
+                ]
+            ],
+            "actions" => [
+                [
+                    "action_type_id" => "550e8400-e29b-41d4-a716-446655440003",
+                    "params" => [
+                        "server_id" => "4f7bdf5f-88d0-4b06-b865-f4630b85ace5",
+                        "subject" => "Special Welcome to Atompen",
+                        "body" => "Hello! We noticed you are an admin or named John. Welcome to our system!",
+                        "recipients" => [
+                            ["field" => "email", "module_name" => "Lead"]
+                        ]
+                    ]
+                ]
+            ]
+        ];
+
+        // We wrap it in data.values as per the module endpoints standard, but also fallback to raw if the controller changes
+        $workflowResponse = $this->postJson('/api/v1/Workflow/new', ['data' => ['values' => $workflowPayload]], $headers);
+        if ($workflowResponse->status() !== 200) {
+            $workflowResponse = $this->postJson('/api/v1/Workflow/new', $workflowPayload, $headers);
+        }
+        $workflowResponse->assertStatus(200);
+        */
+
+        // 5. Create a Lead
         $leadPayload = [
             'data' => [
                 'values' => [
-                    'first_name' => 'Test',
-                    'last_name' => 'Lead',
-                    'email' => 'lead@example.com',
+                    'firstName' => 'John',
+                    'lastName' => 'Lead',
+                    'email' => 'prem_test@example.com',
+                    'phoneNumber' => '5551234567',
                     'company' => 'Lead Company',
-                    'lead_status' => 'New',
-                    'lead_source' => 'Website',
+                    'leadStatus' => 'New',
+                    'leadSource' => 'Website',
                 ]
             ]
         ];
@@ -111,9 +165,10 @@ class UserJourneyTest extends TestCase
         $contactPayload = [
             'data' => [
                 'values' => [
-                    'first_name' => 'Test',
-                    'last_name' => 'Contact',
+                    'firstName' => 'Test',
+                    'lastName' => 'Contact',
                     'email' => 'contact@example.com',
+                    'phoneNumber' => '5559876543',
                     'title' => 'CEO',
                 ]
             ]
@@ -125,5 +180,34 @@ class UserJourneyTest extends TestCase
                 'status' => true,
             ]);
         $this->assertNotNull($contactResponse->json('data.id'));
+
+        // 6. Create an Activity linked to the Lead
+        $leadId = $leadResponse->json('data.id');
+        $activityPayload = [
+            'data' => [
+                'values' => [
+                    'title' => 'Follow up meeting with John',
+                    'activityType' => 'meeting',
+                    'startDate' => '2026-03-05',
+                    'endDate' => '2026-03-05',
+                    'startTime' => '10:00:00',
+                    'endTime' => '11:00:00',
+                    'status' => 'scheduled',
+                ],
+                'relatedRecords' => [
+                    [
+                        'module' => 'Lead',
+                        'id' => $leadId
+                    ]
+                ]
+            ]
+        ];
+
+        $activityResponse = $this->postJson('/api/v1/Activity/new', $activityPayload, $headers);
+        $activityResponse->assertStatus(200)
+            ->assertJson([
+                'status' => true,
+            ]);
+        $this->assertNotNull($activityResponse->json('data.id'));
     }
 }
