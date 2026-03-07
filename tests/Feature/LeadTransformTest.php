@@ -33,15 +33,7 @@ class LeadTransformTest extends TestCase
         if ($this->token) {
             $lead = $this->postJson('/api/v1/Lead/new', [
                 'data' => [
-                    'values' => [
-                        'firstName' => 'Transform',
-                        'lastName' => 'TestLead',
-                        'email' => 'transformtest_lead@atompen.test',
-                        'phoneNumber' => '9990004444',
-                        'company' => 'TransformCo',
-                        'leadStatus' => 'New',
-                        'leadSource' => 'Website',
-                    ],
+                    'values' => \Tests\Helpers\PayloadGenerator::generate('Lead', [], true),
                 ],
             ], ['Authorization' => 'Bearer ' . $this->token]);
             $this->leadId = $lead->json('data.id') ?? '';

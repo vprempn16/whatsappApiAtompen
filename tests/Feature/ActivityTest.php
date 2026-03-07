@@ -38,15 +38,7 @@ class ActivityTest extends TestCase
             // Create a lead to link activities to
             $lead = $this->postJson('/api/v1/Lead/new', [
                 'data' => [
-                    'values' => [
-                        'firstName' => 'Activity',
-                        'lastName' => 'TestLead',
-                        'email' => 'activitytest_lead@atompen.test',
-                        'phoneNumber' => '9990002222',
-                        'company' => 'ActivityCo',
-                        'leadStatus' => 'New',
-                        'leadSource' => 'Website',
-                    ],
+                    'values' => \Tests\Helpers\PayloadGenerator::generate('Lead', [], true),
                 ],
             ], ['Authorization' => 'Bearer ' . $this->token]);
             $this->leadId = $lead->json('data.id') ?? '';
@@ -55,15 +47,10 @@ class ActivityTest extends TestCase
             if ($this->leadId) {
                 $act = $this->postJson('/api/v1/Activity/new', [
                     'data' => [
-                        'values' => [
-                            'title' => 'ActivityTest Meeting',
-                            'activityType' => 'meeting',
-                            'startDate' => '2026-03-06',
-                            'endDate' => '2026-03-06',
-                            'startTime' => '09:00:00',
-                            'endTime' => '10:00:00',
-                            'status' => 'scheduled',
-                        ],
+                        'values' => array_merge(
+                            \Tests\Helpers\PayloadGenerator::generate('Activity', [], true),
+                            ['activityType' => 'meeting']
+                        ),
                         'relatedRecords' => [
                             ['module' => 'Lead', 'id' => $this->leadId],
                         ],
@@ -98,7 +85,11 @@ class ActivityTest extends TestCase
 
         $response = $this->postJson(
             '/api/v1/Activity/' . $this->activityId . '/activity-status-update',
-            ['status' => 'completed'],
+            [
+                'data' => [
+                    'values' => ['status' => 'completed']
+                ]
+            ],
             $this->headers()
         );
         $response->assertStatus(200)->assertJson(['status' => true]);

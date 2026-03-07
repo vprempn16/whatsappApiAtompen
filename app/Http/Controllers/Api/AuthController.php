@@ -19,7 +19,7 @@ class AuthController extends Controller
         $request->user()->currentAccessToken()->delete();
 
         return response()->json([
-            'status'  => true,
+            'status' => true,
             'message' => 'Successfully logged out'
         ]);
     }
@@ -27,7 +27,7 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $request->validate([
-            'email'    => 'required|email',
+            'email' => 'required|email',
             'password' => 'required|string'
         ]);
 
@@ -37,14 +37,14 @@ class AuthController extends Controller
 
         if (!$user) {
             return response()->json([
-                'status'  => false,
-                'message' => 'Invalid credentials'
-            ], 401);
+                'status' => false,
+                'message' => 'Invalid credentials',
+            ], 200);
         }
 
         // Check if password is encrypted (old format) or hashed (new format)
         $passwordValid = false;
-        
+
         // Try to check if it's a hash (starts with $2y$ for bcrypt)
         if (str_starts_with($user->password, '$2y$') || str_starts_with($user->password, '$2a$') || str_starts_with($user->password, '$argon2')) {
             // Password is hashed, use Hash::check
@@ -55,7 +55,7 @@ class AuthController extends Controller
             try {
                 $storedPassword = \Illuminate\Support\Facades\Crypt::decrypt($user->password);
                 $passwordValid = ($storedPassword === $request->password);
-                
+
                 // If valid, re-hash the password for future use
                 if ($passwordValid) {
                     $user->password = Hash::make($request->password);
@@ -68,18 +68,18 @@ class AuthController extends Controller
 
         if (!$passwordValid) {
             return response()->json([
-                'status'  => false,
-                'message' => 'Invalid credentials'
-            ], 401);
+                'status' => false,
+                'message' => 'Invalid credentials',
+            ], 200);
         }
 
         $token = $user->createToken('api-token')->plainTextToken;
 
         return response()->json([
-            'status'  => true,
+            'status' => true,
             'message' => 'Success',
-            'data'    => [
-                'user'  => [
+            'data' => [
+                'user' => [
                     'id' => $user->id,
                     'first_name' => $user->first_name,
                     'last_name' => $user->last_name,

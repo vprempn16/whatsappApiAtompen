@@ -42,7 +42,6 @@ class AtomModel extends Model
 	// SECURITY: Protect critical fields from mass assignment
 	protected $guarded = ['id', 'organization_id', 'deleted', 'created_at', 'updated_at', 'created_by'];
 	protected ?string $_viewType = null;
-	protected $originalCustomAttributes = [];
 
 	protected function getFieldModelManager(): FieldModelManager
 	{
@@ -137,21 +136,6 @@ class AtomModel extends Model
 			Log::info("SAVE - Custom fields saved", ['customAttributes' => $this->customAttributes]);
 			HookManager::executeHook($hookData['module'], 'afterSave', $hookData);
 			Log::info("SAVE - AfterSave hook executed");
-
-			// Trigger Workflows
-			try {
-				$workflowService = app(\App\Modules\Api\V1\Workflow\Services\WorkflowService::class);
-				$event = ($hookData['is_update'] ?? false) ? 'updated' : 'created';
-
-				// Ensure entity_id is set (important for dynamic ID resolution)
-				if (empty($hookData['entity_id'])) {
-					$hookData['entity_id'] = $this->id;
-				}
-
-				$workflowService->trigger($hookData['module'], $event, $hookData);
-			} catch (\Throwable $e) {
-				Log::error("Workflow Trigger Failed: " . $e->getMessage());
-			}
 		} else {
 			Log::error("SAVE - Failed to save record", ['attributes' => $this->getAttributes()]);
 		}
@@ -159,13 +143,15 @@ class AtomModel extends Model
 	}
 	private function assignUuidIfNew(): void
 	{
-		$table = $this->getTable();
 		if (empty($this->id)) {
 			$this->id = (string) Str::uuid();
 			$this->created_at = now();
 			Log::info("SAVE - Assigned new UUID: {$this->id}");
-		} else if (!Schema::hasColumn($table, 'updated_at')) {
-			$this->updated_at = now();
+		} else {
+			$table = $this->getTable();
+			if (Schema::hasColumn($table, 'updated_at')) {
+				$this->updated_at = now();
+			}
 		}
 	}
 
@@ -187,7 +173,13 @@ class AtomModel extends Model
 		if (!empty($this->identifier)) {
 			return;
 		}
-		$orgId = $this->organization_id ?? (auth()->user()->organization_id ?? null);
+		$user = auth()->user();
+		if (!$user) {
+			Log::warning("SAVE - No authenticated user found for numbering generation");
+			return;
+		}
+
+		$orgId = $user->organization_id ?? null;
 		$number = ModuleNumberingService::generateNumber($module, $orgId);
 
 		$this->identifier = $number;
@@ -199,11 +191,12 @@ class AtomModel extends Model
 			return;
 		}
 		$table = $this->getTable();
-		$this->organization_id ??= auth()->user()->organization_id ?? null;
+		$user = auth()->user();
+		$this->organization_id ??= $user->organization_id ?? null;
 		if (!Schema::hasColumn($table, 'created_by')) {
 			return;
 		}
-		$this->created_by ??= auth()->user()->id ?? null;
+		$this->created_by ??= $user->id ?? null;
 	}
 
 	private function buildHookData(): array
@@ -218,16 +211,9 @@ class AtomModel extends Model
 			$newValues[$dbField] = $value;
 		}
 
-		$oldValues = $isNew ? [] : $this->getOriginal();
-		if (!$isNew) {
-			foreach ($this->originalCustomAttributes as $dbField => $value) {
-				$oldValues[$dbField] = $value;
-			}
-		}
-
 		return [
 			'new_values' => $newValues,
-			'old_values' => $oldValues,
+			'old_values' => $isNew ? [] : $this->getOriginal(),
 			'entity_id' => $this->id ?? null,
 			'module' => class_basename($this),
 			'entity_name' => class_basename($this),
@@ -304,14 +290,14 @@ class AtomModel extends Model
 			 |--------------------------------------------------------------------------
 			 */
 			foreach ($data as $apiField => $value) {
-				// reverse map: api_field → db_field
-				$dbField = array_search($apiField, $apiMap, true);
-
-				if (!$dbField) {
+				$fieldModel = $fieldManager->getFieldModel($apiField);
+				if (!$fieldModel) {
 					continue;
 				}
 
-				if (array_key_exists($dbField, $this->customAttributes)) {
+				$dbField = $fieldModel->getFieldName();
+
+				if ($fieldModel->isCustomField()) {
 					$this->customAttributes[$dbField] = $value;
 				} else {
 					$this->setAttribute($dbField, $value);
@@ -397,7 +383,6 @@ class AtomModel extends Model
 		foreach ($customRows as $row) {
 			if (isset($fieldMap[$row->field_id])) {
 				$this->customAttributes[$fieldMap[$row->field_id]] = $row->field_value;
-				$this->originalCustomAttributes[$fieldMap[$row->field_id]] = $row->field_value;
 			}
 		}
 
@@ -818,15 +803,6 @@ class AtomModel extends Model
 			}
 			$this->updated_at = $now;
 			parent::save();
-
-			// Trigger Workflow for Deleted
-			try {
-				$workflowService = app(\App\Modules\Api\V1\Workflow\Services\WorkflowService::class);
-				$workflowService->trigger($hookData['module'], 'deleted', $hookData);
-			} catch (\Throwable $e) {
-				Log::error("Workflow Delete Trigger Failed: " . $e->getMessage());
-			}
-
 			$customTable = strtolower($this->getModuleName()) . '_custom_values';
 			if (\Illuminate\Support\Facades\Schema::hasTable($customTable) && \Illuminate\Support\Facades\Schema::hasColumn($customTable, 'deleted')) {
 				\DB::table($customTable)

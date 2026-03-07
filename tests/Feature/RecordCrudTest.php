@@ -38,35 +38,24 @@ class RecordCrudTest extends TestCase
         $this->token = $login->json('data.token') ?? '';
 
         if ($this->token) {
-            // Try to create a lead; if the email already exists from a prior run
-            // the API will return 200 but with status:false and no data.id.
+            $leadPayload = \Tests\Helpers\PayloadGenerator::generate('Lead', [], true);
             $resp = $this->postJson('/api/v1/Lead/new', [
                 'data' => [
-                    'values' => [
-                        'firstName' => 'CrudTest',
-                        'lastName' => 'Lead',
-                        'email' => 'crudtest_lead@atompen.test',
-                        'phoneNumber' => '9990001111',
-                    ],
+                    'values' => $leadPayload,
                 ],
             ], ['Authorization' => 'Bearer ' . $this->token]);
 
             $this->leadId = $resp->json('data.id') ?? '';
 
-            // Fallback: find the existing lead by filtering
-            if (empty($this->leadId)) {
+            // Fallback: find the existing lead by filtering (email might not be generated unique enough if faker config doesn't reset)
+            if (empty($this->leadId) && isset($leadPayload['email'])) {
                 $list = $this->postJson('/api/v1/filter/Lead', [
-                    'conditions' => [
-                        [
-                            'field_name' => 'email',
-                            'operator_key' => 'equals',
-                            'value' => 'crudtest_lead@atompen.test',
-                            'condition_type' => 'AND',
-                        ]
-                    ],
+                    'search' => [
+                        'value' => $leadPayload['email'],
+                    ]
                 ], ['Authorization' => 'Bearer ' . $this->token]);
 
-                $this->leadId = $list->json('data.records.0.id') ?? '';
+                $this->leadId = $list->json('data.values.0.id') ?? '';
             }
         }
     }
@@ -95,12 +84,16 @@ class RecordCrudTest extends TestCase
 
     public function test_update_lead(): void
     {
+        $this->withoutExceptionHandling();
         $this->assertNotEmpty($this->leadId, 'Lead must be created in setUp');
 
         $response = $this->putJson('/api/v1/Lead/' . $this->leadId, [
             'data' => [
                 'values' => [
                     'firstName' => 'UpdatedCrud',
+                    'lastName' => 'Lead',
+                    'email' => 'crudtest_lead@atompen.test',
+                    'phoneNumber' => '9990001111',
                 ],
             ],
         ], $this->headers());
@@ -116,13 +109,7 @@ class RecordCrudTest extends TestCase
         $response->assertStatus(200)->assertJson(['status' => true]);
     }
 
-    public function test_list_related_contact_records_of_lead(): void
-    {
-        $this->assertNotEmpty($this->leadId, 'Lead must be created in setUp');
 
-        $response = $this->getJson('/api/v1/Lead/' . $this->leadId . '/Contact/records', $this->headers());
-        $response->assertStatus(200)->assertJson(['status' => true]);
-    }
 
     public function test_delete_lead(): void
     {

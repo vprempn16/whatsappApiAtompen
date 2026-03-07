@@ -41,8 +41,12 @@ class SettingsRoleTest extends TestCase
         if ($this->token) {
             // Create a role to test show and delete
             $role = $this->postJson('/api/v1/settings/roles', [
-                'rolename' => 'Test Role From SettingsRoleTest',
-                'description' => 'Automated test role',
+                'data' => [
+                    'id' => 'new',
+                    'name' => 'Test Role From SettingsRoleTest ' . uniqid(),
+                    'description' => 'Automated test role',
+                    'status' => 1,
+                ]
             ], ['Authorization' => 'Bearer ' . $this->token]);
             $this->roleId = $role->json('data.id') ?? '';
         }

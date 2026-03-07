@@ -33,15 +33,7 @@ class CommentTest extends TestCase
         if ($this->token) {
             $lead = $this->postJson('/api/v1/Lead/new', [
                 'data' => [
-                    'values' => [
-                        'firstName' => 'Comment',
-                        'lastName' => 'TestLead',
-                        'email' => 'commenttest_lead@atompen.test',
-                        'phoneNumber' => '9990003333',
-                        'company' => 'CommentCo',
-                        'leadStatus' => 'New',
-                        'leadSource' => 'Website',
-                    ],
+                    'values' => \Tests\Helpers\PayloadGenerator::generate('Lead', [], true),
                 ],
             ], ['Authorization' => 'Bearer ' . $this->token]);
             $this->leadId = $lead->json('data.id') ?? '';

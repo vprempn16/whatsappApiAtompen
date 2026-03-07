@@ -40,12 +40,7 @@ class QuotationInvoiceTest extends TestCase
             // Create a contact to relate to quotation/invoice
             $contact = $this->postJson('/api/v1/Contact/new', [
                 'data' => [
-                    'values' => [
-                        'firstName' => 'QuotTest',
-                        'lastName' => 'Contact',
-                        'email' => 'quottest_contact@atompen.test',
-                        'phoneNumber' => '9990005555',
-                    ],
+                    'values' => \Tests\Helpers\PayloadGenerator::generate('Contact', [], true),
                 ],
             ], ['Authorization' => 'Bearer ' . $this->token]);
             $this->contactId = $contact->json('data.id') ?? '';
@@ -53,18 +48,7 @@ class QuotationInvoiceTest extends TestCase
             // Create a quotation
             $quotation = $this->postJson('/api/v1/Quotation/new', [
                 'data' => [
-                    'values' => [
-                        'title' => 'Test Quotation',
-                        'status' => 'Draft',
-                        'contactId' => $this->contactId,
-                        'lineItems' => [
-                            [
-                                'name' => 'Test Item',
-                                'quantity' => 1,
-                                'unitPrice' => 100.00,
-                            ],
-                        ],
-                    ],
+                    'values' => \Tests\Helpers\PayloadGenerator::generate('Quotation', ['customer_id' => $this->contactId], true),
                 ],
             ], ['Authorization' => 'Bearer ' . $this->token]);
             $this->quotationId = $quotation->json('data.id') ?? '';
@@ -72,18 +56,7 @@ class QuotationInvoiceTest extends TestCase
             // Create an invoice
             $invoice = $this->postJson('/api/v1/Invoice/new', [
                 'data' => [
-                    'values' => [
-                        'title' => 'Test Invoice',
-                        'status' => 'Draft',
-                        'contactId' => $this->contactId,
-                        'lineItems' => [
-                            [
-                                'name' => 'Test Item',
-                                'quantity' => 1,
-                                'unitPrice' => 200.00,
-                            ],
-                        ],
-                    ],
+                    'values' => \Tests\Helpers\PayloadGenerator::generate('Invoice', ['customer_id' => $this->contactId], true),
                 ],
             ], ['Authorization' => 'Bearer ' . $this->token]);
             $this->invoiceId = $invoice->json('data.id') ?? '';

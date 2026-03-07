@@ -40,7 +40,9 @@ class GlobalSearchTest extends TestCase
     public function test_global_search_post(): void
     {
         $response = $this->postJson('/api/v1/global-search', [
-            'query' => 'John',
+            'data' => [
+                'value' => 'John',
+            ]
         ], $this->headers());
 
         $response->assertStatus(200)->assertJson(['status' => true]);
@@ -48,21 +50,16 @@ class GlobalSearchTest extends TestCase
 
     public function test_global_search_get(): void
     {
-        $response = $this->getJson('/api/v1/global-search?query=John', $this->headers());
+        $response = $this->getJson('/api/v1/global-search?value=John', $this->headers());
         $response->assertStatus(200)->assertJson(['status' => true]);
     }
 
     public function test_module_filter_post(): void
     {
         $response = $this->postJson('/api/v1/filter/Lead', [
-            'conditions' => [
-                [
-                    'field_name' => 'leadStatus',
-                    'operator_key' => 'equals',
-                    'value' => 'New',
-                    'condition_type' => 'AND',
-                ],
-            ],
+            'search' => [
+                'value' => 'LeadName',
+            ]
         ], $this->headers());
 
         $response->assertStatus(200)->assertJson(['status' => true]);
@@ -70,7 +67,7 @@ class GlobalSearchTest extends TestCase
 
     public function test_module_filter_get(): void
     {
-        $response = $this->getJson('/api/v1/filter/Lead', $this->headers());
+        $response = $this->getJson('/api/v1/filter/Lead?search=LeadName', $this->headers());
         $response->assertStatus(200)->assertJson(['status' => true]);
     }
 }

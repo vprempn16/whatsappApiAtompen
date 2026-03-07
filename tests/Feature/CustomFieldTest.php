@@ -36,12 +36,10 @@ class CustomFieldTest extends TestCase
         if ($this->token) {
             // Create a custom text field on Lead module
             $resp = $this->postJson('/api/v1/custom-field-creation', [
-                'data' => [
-                    'fieldlabel' => 'Custom Test Field',
-                    'fieldtype' => 'text',
-                    'modulename' => 'Lead',
-                    'mandatory' => '0',
-                ],
+                'fieldlabel' => 'Custom Test Field',
+                'fieldtype' => 'text',
+                'modulename' => 'Lead',
+                'mandatory' => '0',
             ], ['Authorization' => 'Bearer ' . $this->token]);
 
             $this->fieldId = $resp->json('data.id') ?? '';

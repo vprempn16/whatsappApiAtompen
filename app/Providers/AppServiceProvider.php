@@ -22,13 +22,15 @@ use Carbon\Carbon;
 
 class AppServiceProvider extends ServiceProvider
 {
+	public static $isProcessing = false;
+
 	public function boot()
 	{
 		// Force HTTPS for production and local environments when using HTTPS
 		if (app()->environment('production') || request()->secure() || (env('APP_URL', '') !== '' && strpos(env('APP_URL', ''), 'https://') === 0)) {
 			URL::forceScheme('https');
 		}
-		
+
 		HookManager::registerHook('*', 'afterSave', [$this, 'handleAfterSave']);
 		HookManager::registerHook('*', 'afterDelete', [$this, 'handleAfterDelete']);
 
@@ -36,6 +38,17 @@ class AppServiceProvider extends ServiceProvider
 
 	public function handleAfterSave(array $data)
 	{
+		if (static::$isProcessing) {
+			return;
+		}
+
+		$module = $data['module'] ?? $data['entity_name'] ?? null;
+		if (in_array($module, ['GlobalSearchIndex', 'AuditLog'])) {
+			return;
+		}
+
+		static::$isProcessing = true;
+
 		Log::info("Global afterSave hooks registered successfully - ID : " . ($data['entity_id'] ?? 'N/A'));
 
 		try {
@@ -46,10 +59,12 @@ class AppServiceProvider extends ServiceProvider
 			$this->handleValidateLeadIsConverted($data);
 
 		} catch (\Exception $e) {
-			Log::error([
+			Log::error("Global afterSave hook failed: " . $e->getMessage(), [
 				'error' => $e->getMessage(),
-				'data' => $data 
+				'data' => $data
 			]);
+		} finally {
+			static::$isProcessing = false;
 		}
 	}
 	protected function handleValidateLeadIsConverted(array $data)
@@ -63,7 +78,7 @@ class AppServiceProvider extends ServiceProvider
 				return false;
 			}
 		} catch (\Exception $e) {
-			Log::error([
+			Log::error("Lead conversion validation failed: " . $e->getMessage(), [
 				'error' => $e->getMessage(),
 				'data' => $data
 			]);
@@ -77,7 +92,7 @@ class AppServiceProvider extends ServiceProvider
 			$auditService = new AuditLogService();
 			$auditService->create($data, $actionDetails);
 		} catch (\Exception $e) {
-			Log::error([
+			Log::error("Audit log creation failed: " . $e->getMessage(), [
 				'error' => $e->getMessage(),
 				'data' => $data
 			]);
@@ -135,7 +150,7 @@ class AppServiceProvider extends ServiceProvider
 				$auditService->logMeeting('Activity', $activityId, $metadata, $orgId, $userId);
 			}
 		} catch (\Exception $e) {
-			Log::error([
+			Log::error("Activity type logging failed: " . $e->getMessage(), [
 				'error' => $e->getMessage(),
 				'data' => $data
 			]);
@@ -167,146 +182,158 @@ class AppServiceProvider extends ServiceProvider
 
 
 	protected function createSearchIndex(array $data)
-{
-    try {
-        $module   = $data['entity_name'];
-        $recordId = $data['entity_id'];
-        $orgId    = $data['organization_id'];
-/**
-         * ----------------------------------------------------
-         * PRODUCT MODULE (SPECIAL LOGIC)
-         * ----------------------------------------------------
-         * - Label = name only
-         * - Search text = all searchable fields except name
-         */
-        if ($module === 'Product') {
+	{
+		try {
+			$module = $data['entity_name'];
+			$recordId = $data['entity_id'];
+			$orgId = $data['organization_id'];
+			/**
+			 * ----------------------------------------------------
+			 * PRODUCT MODULE (SPECIAL LOGIC)
+			 * ----------------------------------------------------
+			 * - Label = name only
+			 * - Search text = all searchable fields except name
+			 */
+			if ($module === 'Product') {
 
-            // Label is only the product name
-            $labelString = $data['new_values']['name'] ?? 'Unnamed Product';
+				// Label is only the product name
+				$labelString = $data['new_values']['name'] ?? 'Unnamed Product';
 
-            // Fetch searchable fields
-            $configs = SearchableModule::where('module_name', $module)->get();
+				// Fetch searchable fields
+				$configs = SearchableModule::where('module_name', $module)->get();
 
-            $searchText = [];
+				$searchText = [];
 
-            foreach ($configs as $config) {
-                $field = $config->searchable_field;
+				foreach ($configs as $config) {
+					$field = $config->searchable_field;
 
-                // Skip name from search text
-                if ($field === 'name') {
-                    continue;
-                }
+					// Skip name from search text
+					if ($field === 'name') {
+						continue;
+					}
 
-                $value = $data['new_values'][$field] ?? null;
+					$value = $data['new_values'][$field] ?? null;
 
-                if (!empty($value)) {
-                    $searchText[$field] = $value;
-                }
-            }
+					if (!empty($value)) {
+						$searchText[$field] = $value;
+					}
+				}
 
-            $this->upsertGlobalSearchIndex(
-                $orgId,
-                $module,
-                $recordId,
-                $labelString,
-                $searchText
-            );
+				$this->upsertGlobalSearchIndex(
+					$orgId,
+					$module,
+					$recordId,
+					$labelString,
+					$searchText
+				);
 
-            return;
-        }
+				return;
+			}
 
-        // ✅ If module is Contact, User, or Lead → label = first_name + last_name
-        if (in_array($module, ['Contact', 'User', 'Lead'])) {
-            $firstName = $data['new_values']['first_name'] ?? '';
-            $lastName  = $data['new_values']['last_name'] ?? '';
-            $labelString = trim($firstName . ' ' . $lastName);
+			// ✅ If module is Contact, User, or Lead → label = first_name + last_name
+			if (in_array($module, ['Contact', 'User', 'Lead'])) {
+				$firstName = $data['new_values']['first_name'] ?? '';
+				$lastName = $data['new_values']['last_name'] ?? '';
+				$labelString = trim($firstName . ' ' . $lastName);
 
-            if (empty($labelString)) {
-                // fallback if names are missing
-                $labelString = $data['new_values']['name'] ?? 'Unnamed ' . $module;
-            }
+				if (empty($labelString)) {
+					// fallback if names are missing
+					$labelString = $data['new_values']['name'] ?? 'Unnamed ' . $module;
+				}
 
-            $searchText = [
-                'first_name' => $firstName,
-                'last_name'  => $lastName,
-            ];
+				$searchText = [
+					'first_name' => $firstName,
+					'last_name' => $lastName,
+				];
 
-            // ✅ Upsert into global_search_index
-            $this->upsertGlobalSearchIndex($orgId, $module, $recordId, $labelString, $searchText);
-            return;
-        }
+				// ✅ Upsert into global_search_index
+				$this->upsertGlobalSearchIndex($orgId, $module, $recordId, $labelString, $searchText);
+				return;
+			}
 
-        // Normal modules (not Contact/User/Lead)
-        $configs = SearchableModule::where('module_name', $module)->get();
+			// Normal modules (not Contact/User/Lead)
+			$configs = SearchableModule::where('module_name', $module)->get();
 
-        if ($configs->isEmpty()) {
-            return; // no mapping, skip
-        }
+			if ($configs->isEmpty()) {
+				return; // no mapping, skip
+			}
 
-        $labels     = [];
-        $searchText = [];
+			$labels = [];
+			$searchText = [];
 
-        foreach ($configs as $config) {
-            $field = $config->searchable_field;
-            $value = $data['new_values'][$field] ?? null;
+			foreach ($configs as $config) {
+				$field = $config->searchable_field;
+				$value = $data['new_values'][$field] ?? null;
 
-            if (!empty($value)) {
-                $labels[]           = $value;
-                $searchText[$field] = $value;
-            }
-        }
+				if (!empty($value)) {
+					$labels[] = $value;
+					$searchText[$field] = $value;
+				}
+			}
 
-        if (empty($labels)) {
-            return; // nothing to index
-        }
+			if (empty($labels)) {
+				return; // nothing to index
+			}
 
-        $labelString = implode(' ', $labels);
-        $this->upsertGlobalSearchIndex($orgId, $module, $recordId, $labelString, $searchText);
+			$labelString = implode(' ', $labels);
+			$this->upsertGlobalSearchIndex($orgId, $module, $recordId, $labelString, $searchText);
 
-    } catch (\Exception $e) {
-        Log::error("Failed to create or update search index", [
-            'error' => $e->getMessage(),
-            'data'  => $data,
-        ]);
-    }
-}
-protected function upsertGlobalSearchIndex($orgId, $module, $recordId, $labelString, $searchText)
-{
-    // Security: Always filter by organization_id to prevent cross-organization data access
-    $existing = GlobalSearchIndex::where('module_name', $module)
-        ->where('record_id', $recordId)
-        ->where('organization_id', $orgId)
-        ->first();
+		} catch (\Exception $e) {
+			Log::error("Failed to create or update search index", [
+				'error' => $e->getMessage(),
+				'data' => $data,
+			]);
+		}
+	}
+	protected function upsertGlobalSearchIndex($orgId, $module, $recordId, $labelString, $searchText)
+	{
+		// Security: Always filter by organization_id to prevent cross-organization data access
+		$existing = GlobalSearchIndex::where('module_name', $module)
+			->where('record_id', $recordId)
+			->where('organization_id', $orgId)
+			->first();
 
-    if ($existing) {
-        $existing->update([
-            'organizationId' => $orgId,
-            'label'          => $labelString,
-            'searchText'     => json_encode($searchText),
-        ]);
+		if ($existing) {
+			$existing->update([
+				'organization_id' => $orgId,
+				'label' => mb_substr($labelString, 0, 255),
+				'search_text' => json_encode($searchText),
+			]);
 
-        Log::info("Search index updated for {$module}", [
-            'record_id' => $recordId,
-            'label'     => $labelString,
-        ]);
-    } else {
-        GlobalSearchIndex::create([
-            'organizationId' => $orgId,
-            'moduleName'     => $module,
-            'recordId'       => $recordId,
-            'label'          => $labelString,
-            'searchText'     => json_encode($searchText),
-        ]);
+			Log::info("Search index updated for {$module}", [
+				'record_id' => $recordId,
+				'label' => $labelString,
+			]);
+		} else {
+			$id = (string) \Illuminate\Support\Str::uuid();
+			$now = now();
+			DB::table('global_search_index')->insert([
+				'id' => $id,
+				'organization_id' => $orgId,
+				'module_name' => $module,
+				'record_id' => $recordId,
+				'label' => mb_substr($labelString, 0, 255),
+				'search_text' => json_encode($searchText),
+				'deleted' => 0,
+				'created_at' => $now,
+				'updated_at' => $now,
+				'created_by' => auth()->user()?->id,
+			]);
 
-        Log::info("Search index created for {$module}", [
-            'record_id' => $recordId,
-            'label'     => $labelString,
-        ]);
-    }
-}
+			Log::info("Search index created for {$module}", [
+				'record_id' => $recordId,
+				'label' => $labelString,
+			]);
+		}
+	}
 
 	public function handleAfterDelete(array $data)
 	{
+		if (static::$isProcessing) {
+			return;
+		}
+		static::$isProcessing = true;
+
 		try {
 			// Use AuditLogService for consistent delete logging
 			$auditService = new AuditLogService();
@@ -321,7 +348,7 @@ protected function upsertGlobalSearchIndex($orgId, $module, $recordId, $labelStr
 			Log::info("AuditLog created for afterDelete", [
 				'module' => $data['module'],
 				'entity' => $data['entity_id'],
-				'event'  => 'afterDelete',
+				'event' => 'afterDelete',
 			]);
 
 			// Intelligent update of global_search_index: mark matching entries as deleted
@@ -335,11 +362,11 @@ protected function upsertGlobalSearchIndex($orgId, $module, $recordId, $labelStr
 					->where('organization_id', $orgId)
 					->where(function ($q) use ($data) {
 						$q->where('module_name', $data['entity_name'])
-						  ->where('record_id', $data['entity_id']);
+							->where('record_id', $data['entity_id']);
 					})
 					->orWhere(function ($q) use ($data, $orgId) {
 						$q->where('record_id', $data['entity_id'])
-						  ->where('organization_id', $orgId);
+							->where('organization_id', $orgId);
 					})
 					->update([
 						'deleted' => 1,
@@ -349,27 +376,29 @@ protected function upsertGlobalSearchIndex($orgId, $module, $recordId, $labelStr
 				if ($affected) {
 					Log::info("Global search index entries marked deleted", [
 						'entity_name' => $data['entity_name'],
-						'entity_id'   => $data['entity_id'],
+						'entity_id' => $data['entity_id'],
 						'affected_rows' => $affected,
 					]);
 				} else {
 					Log::info("No global search index entries found to mark deleted", [
 						'entity_name' => $data['entity_name'],
-						'entity_id'   => $data['entity_id'],
+						'entity_id' => $data['entity_id'],
 					]);
 				}
 			} catch (\Exception $e) {
 				Log::error("Failed to update global_search_index on delete", [
 					'error' => $e->getMessage(),
-					'data'  => $data,
+					'data' => $data,
 				]);
 			}
 
 		} catch (\Exception $e) {
 			Log::error("Failed to create AuditLog in afterDelete hook", [
 				'error' => $e->getMessage(),
-				'data'  => $data,
+				'data' => $data,
 			]);
+		} finally {
+			static::$isProcessing = false;
 		}
 	}
 	public function handleInvoiceChecklist(array $data)
@@ -384,8 +413,8 @@ protected function upsertGlobalSearchIndex($orgId, $module, $recordId, $labelStr
 			}
 
 			$invoiceId = $data['entity_id'];
-			$userId    = auth()->user()->id;
-			$orgId     = auth()->user()->organization_id;
+			$userId = auth()->user()->id;
+			$orgId = auth()->user()->organization_id;
 
 			$template = ChecklistTemplate::where('module', 'Invoice')
 				->where('is_active', 1)
@@ -397,41 +426,41 @@ protected function upsertGlobalSearchIndex($orgId, $module, $recordId, $labelStr
 			}
 
 			$checklist = Checklist::create([
-				'recordId'           => $invoiceId,
-				'checklistTemplateId'=> $template->id,
-				'status'             => 'Assigned',
-				'createdBy'          => $userId,
-				'organizationId'     => $orgId,
+				'recordId' => $invoiceId,
+				'checklistTemplateId' => $template->id,
+				'status' => 'Assigned',
+				'createdBy' => $userId,
+				'organizationId' => $orgId,
 			]);
 
 			$items = ChecklistTemplateItem::where('checklist_template_id', $template->id)->get();
 
 			foreach ($items as $item) {
 				$checklistItem = ChecklistItem::create([
-					'checklistId'     => $checklist->id,
-					'templateItemId'  => $item->id,
-					'itemName'        => $item->item_name,
-					'itemType'        => $item->item_type,
-					'status'          => $item->status,
-					'notes'          => $item->notes,
-					'photoUrl'          => $item->photo_url,
-					'orderIndex'          => $item->order_index,
-					'assignedTo'      => $userId,
-					'organizationId'  => $orgId,
-					'createdBy'       => $userId,
+					'checklistId' => $checklist->id,
+					'templateItemId' => $item->id,
+					'itemName' => $item->item_name,
+					'itemType' => $item->item_type,
+					'status' => $item->status,
+					'notes' => $item->notes,
+					'photoUrl' => $item->photo_url,
+					'orderIndex' => $item->order_index,
+					'assignedTo' => $userId,
+					'organizationId' => $orgId,
+					'createdBy' => $userId,
 				]);
 			}
 
 			Log::info("Checklist and tasks created for invoice", [
-				'invoice_id'   => $invoiceId,
+				'invoice_id' => $invoiceId,
 				'checklist_id' => $checklist->id,
-				'user_id'      => $userId,
+				'user_id' => $userId,
 			]);
 
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			Log::error("Failed to create checklist and tasks for invoice", [
 				'error' => $e->getMessage(),
-				'data'  => $data,
+				'data' => $data,
 			]);
 		}
 	}
