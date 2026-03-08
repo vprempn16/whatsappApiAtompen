@@ -50,9 +50,14 @@ class CommentTest extends TestCase
         $this->assertNotEmpty($this->leadId, 'Lead must be created in setUp');
 
         $response = $this->postJson('/api/v1/comment/new', [
-            'comment' => 'This is a test comment from CommentTest.',
-            'module' => 'Lead',
-            'entity_id' => $this->leadId,
+            'data' => [
+                'values' => [
+                    'content' => 'This is a test comment from CommentTest.',
+                ],
+                'relatedRecord' => [
+                    ['parent_module' => 'Lead', 'parent_id' => $this->leadId]
+                ]
+            ]
         ], $this->headers());
 
         $response->assertStatus(200)->assertJson(['status' => true]);

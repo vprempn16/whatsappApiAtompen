@@ -1,0 +1,21 @@
+{
+    "organization_id": "77e1bbf6-51f5-45d8-9bd6-d40ed8de9b2a",
+    "organization_name": "Demo Org 69abfe7ec5627",
+    "admin_email": "admin_69abfe8627cef@atompen.test",
+    "admin_password": "Admin@123",
+    "admin_token": "1036|fEJT7D1AbOsEgQYTmQyK4mnd1D0jugAuPVb3yuHy34de5fae",
+    "field_lead_source_code_id": "9fe963f7-6e3c-4c05-be49-daac984c94c6",
+    "field_lead_score_id": "f3a11b9b-23c6-4782-a044-577844affe1c",
+    "field_contact_rating_id": "4d1d829c-c58d-4568-8b36-2faddb57a5fe",
+    "field_contact_category_id": "e48f0023-dc42-45f2-87f5-11f421d882fb",
+    "profile_id_sales_manager": null,
+    "profile_id_sales_executive": null,
+    "profile_id_relationship_manager": null,
+    "profile_id_customer_success_manager": null,
+    "role_ceo_id": null,
+    "role_sales_manager_id": null,
+    "user_manager_email": "manager_69abfe92bda14@example.com",
+    "user_manager_password": "Password123!",
+    "user_executive_email": "executive_69abfe933ae74@example.com",
+    "user_executive_password": "Password123!"
+}

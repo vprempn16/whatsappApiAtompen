@@ -49,7 +49,7 @@ class ActivityTest extends TestCase
                     'data' => [
                         'values' => array_merge(
                             \Tests\Helpers\PayloadGenerator::generate('Activity', [], true),
-                            ['activityType' => 'meeting']
+                            ['activity_type' => 'Call', 'status' => 'Scheduled']
                         ),
                         'relatedRecords' => [
                             ['module' => 'Lead', 'id' => $this->leadId],

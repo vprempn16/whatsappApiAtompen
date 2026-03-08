@@ -165,11 +165,10 @@ class TenantSetupTest extends TestCase
         // 2. Admin creates a new custom role 'Sales Associate'
         $roleResp = $this->postJson('/api/v1/settings/roles', [
             'data' => [
-                'values' => [
-                    'name' => 'Sales Associate',
-                    'description' => 'Limited permissions role',
-                    'status' => 'active'
-                ]
+                'id' => 'new',
+                'name' => 'Sales Associate',
+                'description' => 'Limited permissions role',
+                'status' => 'active'
             ]
         ], $headers);
         $roleResp->assertStatus(200)->assertJson(['status' => true]);

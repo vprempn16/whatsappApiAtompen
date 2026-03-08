@@ -1,27 +1,10 @@
 # run-all-tests.ps1
-# Runs the entire Feature test suite and writes a clean report to:
-#   storage/logs/test_suite.log
-#
-# Usage (from project root):
-#   .\run-all-tests.ps1
+# This script runs all Phase 1 API tests sequentially.
+# Sequential execution is ensured by numeric prefixes on filenames and class names.
 
-$xmlPath = "/var/www/storage/logs/junit_all.xml"
-$logPath = "/var/www/storage/logs/test_suite.csv"
-$localCsv = "storage\logs\test_suite.csv"
-$localLog = "storage\logs\test_suite.log"
+Write-Host "Running All API Tests..." -ForegroundColor Cyan
 
-Write-Host ""
-Write-Host "Running all Feature tests..." -ForegroundColor Cyan
+# Set environment variables for the TestReporter
+docker exec -e TEST_LOG_PATH="storage/logs/test_suite.log" -e TEST_CSV_PATH="tests/ApiTests/reports/reports.csv" atompen-app php artisan test tests/ApiTests/Phase1 --order-by=default
 
-# Run PHPUnit and capture JUnit XML
-docker exec atompen-app php artisan test --testsuite=Feature `
-    --log-junit $xmlPath | Out-Null
-
-# Format the XML into a clean log
-docker exec atompen-app php /var/www/tests/format-log.php $xmlPath $logPath
-
-Write-Host ""
-Write-Host "----------------------------------------------" -ForegroundColor DarkGray
-Write-Host "Report saved to: $localCsv" -ForegroundColor Green
-Write-Host "Log saved to:    $localLog" -ForegroundColor Green
-Write-Host "----------------------------------------------" -ForegroundColor DarkGray
+Write-Host "`nAll Tests Complete. Check storage/logs/test_suite.log and tests/ApiTests/reports/reports.csv for details." -ForegroundColor Green
