@@ -1,0 +1,8 @@
+"Test Name",Status,Duration,Module,Timestamp
+"Upload Asset to Lead",PASSED,21.05s,Asset,"2026-03-09 14:27:00"
+"Get Lead Assets",PASSED,1.2s,Asset,"2026-03-09 14:27:06"
+"Add Comment to Lead",PASSED,1.26s,Comment,"2026-03-09 14:27:09"
+"Add Comment with Auto Follow-up Trigger",PASSED,1.62s,Comment,"2026-03-09 14:27:12"
+"Verify Auto Follow-up Activity Creation",FAILED,1.68s,Activity,"2026-03-09 14:27:12"
+"Verify Audit Log Capture on Update",FAILED,1.84s,AuditLog,"2026-03-09 14:27:14"
+"Verify Related Comment in Lead Audit Log",FAILED,1.7s,AuditLog,"2026-03-09 14:27:17"

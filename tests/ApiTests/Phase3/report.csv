@@ -1,0 +1,8 @@
+"Test Name",Status,Duration,Module,Timestamp
+"Create Product (Automated Payload)",PASSED,37.6s,Product,"2026-03-09 11:16:22"
+"Get Product Details",PASSED,4.3s,Product,"2026-03-09 11:16:42"
+"Update Product (PUT)",PASSED,2.63s,Product,"2026-03-09 11:16:55"
+"Inline Edit Product (PATCH)",FAILED,1.34s,Product,"2026-03-09 11:17:00"
+"Delete Product",PASSED,5.66s,Product,"2026-03-09 11:17:10"
+"Create Quotation w/ Items (Manual Payload)",FAILED,5.52s,Quotation,"2026-03-09 11:17:23"
+"Create Invoice w/ Items (Manual Payload)",FAILED,2.75s,Invoice,"2026-03-09 11:17:50"

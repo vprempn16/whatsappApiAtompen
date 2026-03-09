@@ -1,0 +1,22 @@
+═════════════════════════════════════════════════════════════════
+  TEST REPORT  ·  2026-03-09 14:27:00
+═════════════════════════════════════════════════════════════════
+
+  ✓  Upload Asset to Lead (id:  / title: Test Asset for Lead / parentId: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1)
+         21.05s   PASSED
+  ✓  Get Lead Assets (parentId: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1 / assetCount: 2)
+          1.20s   PASSED
+  ✓  Add Comment to Lead (id: 6114d138-364d-4052-bc3e-98cd0a6fb20a / parentId: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1)
+          1.26s   PASSED
+  ✓  Add Comment with Auto Follow-up Trigger (comment: Had a great chat. Will call tomorrow to finalize. / activityId: 38d8e46a-d907-40c2-a848-b40375e108dd)
+          1.62s   PASSED
+  ✗  Verify Auto Follow-up Activity Creation (parentActivityId: 38d8e46a-d907-40c2-a848-b40375e108dd)
+          1.68s   FAILED
+  ✗  Verify Audit Log Capture on Update (module: Lead / id: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1 / updatedField: leadSource / newValue: Updated Lead Source 69aed8c15b7b3)
+          1.84s   FAILED
+  ✗  Verify Related Comment in Lead Audit Log (leadId: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1)
+          1.70s   FAILED
+
+───────────────────────────────────────────────────────────────────────────
+  TOTAL: 7 tests  |  4 passed  |  3 failed
+───────────────────────────────────────────────────────────────────────────

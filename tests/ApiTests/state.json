@@ -17,5 +17,8 @@
     "user_manager_email": "manager_69abfe92bda14@example.com",
     "user_manager_password": "Password123!",
     "user_executive_email": "executive_69abfe933ae74@example.com",
-    "user_executive_password": "Password123!"
+    "user_executive_password": "Password123!",
+    "last_lead_id": "ea5cac9b-1997-428c-ab4c-ac464a6f9ab1",
+    "last_contact_id": "005cdf48-30cd-4d3e-8e21-dd4ce9350e65",
+    "last_product_id": "f800fdde-57dc-44ae-a660-7fd09c505864"
 }
