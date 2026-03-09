@@ -1,0 +1,22 @@
+═════════════════════════════════════════════════════════════════
+  TEST REPORT  ·  2026-03-09 11:16:22
+═════════════════════════════════════════════════════════════════
+
+  ✓  Create Product (Automated Payload) (id: f800fdde-57dc-44ae-a660-7fd09c505864 / productname: )
+         37.60s   PASSED
+  ✓  Get Product Details (id: f800fdde-57dc-44ae-a660-7fd09c505864)
+          4.30s   PASSED
+  ✓  Update Product (PUT) (id: f800fdde-57dc-44ae-a660-7fd09c505864)
+          2.63s   PASSED
+  ✗  Inline Edit Product (PATCH) (id: f800fdde-57dc-44ae-a660-7fd09c505864 / field: productname / value: Updated Product 69aeac2be381c)
+          1.34s   FAILED
+  ✓  Delete Product (id: f800fdde-57dc-44ae-a660-7fd09c505864)
+          5.66s   PASSED
+  ✗  Create Quotation w/ Items (Manual Payload) (id:  / subject: Manual Quote 69aeac3f6e8c8)
+          5.52s   FAILED
+  ✗  Create Invoice w/ Items (Manual Payload) (id:  / invoiceNumber: INV-69AEAC5D428AF)
+          2.75s   FAILED
+
+───────────────────────────────────────────────────────────────────────────
+  TOTAL: 7 tests  |  4 passed  |  3 failed
+───────────────────────────────────────────────────────────────────────────

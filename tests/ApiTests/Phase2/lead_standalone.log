@@ -1,0 +1,18 @@
+═════════════════════════════════════════════════════════════════
+  TEST REPORT  ·  2026-03-09 04:56:23
+═════════════════════════════════════════════════════════════════
+
+  ✓  Create Lead (Automated Payload) (id: a825f0d0-7f00-4165-bfe6-b93599dd5148 / name:  )
+         17.29s   PASSED
+  ✓  Get Lead Details (id: a825f0d0-7f00-4165-bfe6-b93599dd5148)
+          1.40s   PASSED
+  ✓  Update Lead (PUT) (id: a825f0d0-7f00-4165-bfe6-b93599dd5148)
+          1.84s   PASSED
+  ✗  Inline Edit Lead (PATCH) (id: a825f0d0-7f00-4165-bfe6-b93599dd5148 / field: company / value: Updated Company 69ae53011fcdf)
+          0.41s   FAILED
+  ✓  Delete Lead (id: a825f0d0-7f00-4165-bfe6-b93599dd5148)
+          1.83s   PASSED
+
+───────────────────────────────────────────────────────────────────────────
+  TOTAL: 5 tests  |  4 passed  |  1 failed
+───────────────────────────────────────────────────────────────────────────

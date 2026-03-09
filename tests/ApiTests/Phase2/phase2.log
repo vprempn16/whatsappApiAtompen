@@ -1,0 +1,28 @@
+═════════════════════════════════════════════════════════════════
+  TEST REPORT  ·  2026-03-09 05:34:06
+═════════════════════════════════════════════════════════════════
+
+  ✓  Create Lead (Automated Payload) (id: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1 / name:  )
+         19.42s   PASSED
+  ✓  Get Lead Details (id: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1)
+          0.97s   PASSED
+  ✓  Update Lead (PUT) (id: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1)
+          2.02s   PASSED
+  ✗  Inline Edit Lead (PATCH) (id: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1 / field: company / value: Updated Company 69ae5bda8b32c)
+          0.48s   FAILED
+  ✓  Delete Lead (id: ea5cac9b-1997-428c-ab4c-ac464a6f9ab1)
+          1.86s   PASSED
+  ✓  Create Contact (Automated Payload) (id: 005cdf48-30cd-4d3e-8e21-dd4ce9350e65 / name:  )
+          1.57s   PASSED
+  ✓  Get Contact Details (id: 005cdf48-30cd-4d3e-8e21-dd4ce9350e65)
+          0.46s   PASSED
+  ✓  Update Contact (PUT) (id: 005cdf48-30cd-4d3e-8e21-dd4ce9350e65)
+          1.01s   PASSED
+  ✓  Inline Edit Contact (PATCH) (id: 005cdf48-30cd-4d3e-8e21-dd4ce9350e65 / field: email / value: updated_69ae5be758824@example.com)
+          0.70s   PASSED
+  ✓  Delete Contact (id: 005cdf48-30cd-4d3e-8e21-dd4ce9350e65)
+          0.63s   PASSED
+
+───────────────────────────────────────────────────────────────────────────
+  TOTAL: 10 tests  |  9 passed  |  1 failed
+───────────────────────────────────────────────────────────────────────────

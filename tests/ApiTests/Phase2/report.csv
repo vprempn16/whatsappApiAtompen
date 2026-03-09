@@ -1,0 +1,11 @@
+"Test Name",Status,Duration,Module,Timestamp
+"Create Lead (Automated Payload)",PASSED,19.42s,Lead,"2026-03-09 05:34:06"
+"Get Lead Details",PASSED,0.97s,Lead,"2026-03-09 05:34:12"
+"Update Lead (PUT)",PASSED,2.02s,Lead,"2026-03-09 05:34:17"
+"Inline Edit Lead (PATCH)",FAILED,0.48s,Lead,"2026-03-09 05:34:18"
+"Delete Lead",PASSED,1.86s,Lead,"2026-03-09 05:34:21"
+"Create Contact (Automated Payload)",PASSED,1.57s,Contact,"2026-03-09 05:34:25"
+"Get Contact Details",PASSED,0.46s,Contact,"2026-03-09 05:34:27"
+"Update Contact (PUT)",PASSED,1.01s,Contact,"2026-03-09 05:34:30"
+"Inline Edit Contact (PATCH)",PASSED,0.7s,Contact,"2026-03-09 05:34:31"
+"Delete Contact",PASSED,0.63s,Contact,"2026-03-09 05:34:33"

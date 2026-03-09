@@ -1,0 +1,78 @@
+═════════════════════════════════════════════════════════════════
+  TEST REPORT  ·  2026-03-07 10:30:00
+═════════════════════════════════════════════════════════════════
+
+  ✓  Create organization with valid data (name: Demo Org 69abfe17e5bbf / id: 36cb03c2-40b6-4c8f-a0d3-8bce6dc38bf7)
+         16.13s   PASSED
+  ✓  Create organization with missing required fields
+          1.96s   PASSED
+  ✗  Create organization duplicate name (name: Demo Org 69abfe17e5bbf / status: 200)
+          0.05s   FAILED
+  ✓  Organization validation errors
+          0.09s   PASSED
+  ✓  Create admin user for organization (email: admin_69abfe35323a3@atompen.test / password: Admin@123)
+          2.48s   PASSED
+  ✓  Admin email validation (email: admin_69abfe35323a3@atompen.test / reason: Duplicate email check)
+          0.10s   PASSED
+  ✓  Password validation (password: short / reason: Min length check)
+          0.10s   PASSED
+  ✓  Login success (user: admin_69abfe35323a3@atompen.test / password: Admin@123)
+          0.16s   PASSED
+  ✓  Login wrong password (user: admin_69abfe35323a3@atompen.test / password: wrong_password)
+          0.03s   PASSED
+  ✓  Login nonexistent email (user: nonexistent_69abfe3961fb6@atompen.test)
+          0.02s   PASSED
+  ✓  Logout
+          0.57s   PASSED
+  ✓  Create text field (field_name: Lead Source Code / field_type: text)
+          0.64s   PASSED
+  ✓  Create number field (field_name: Lead Score / field_type: number)
+          0.09s   PASSED
+  ✓  Create number field (field_name: Contact Rating / field_type: number)
+          0.08s   PASSED
+  ✓  Create text field (field_name: Contact Category / field_type: text)
+          0.11s   PASSED
+  ✓  Create date field (field_name: Next Follow Up / field_type: date)
+          0.09s   PASSED
+  ✓  Duplicate field name validation (field_name: Lead Score)
+          0.08s   PASSED
+  ✓  Invalid field type (field_type: invalid_type)
+          0.06s   PASSED
+  ✓  Create profile (name: Sales Manager)
+          0.16s   PASSED
+  ✓  Create profile (name: Sales Executive)
+          0.21s   PASSED
+  ✓  Create profile (name: Relationship Manager)
+          0.24s   PASSED
+  ✓  Create profile (name: Customer Success Manager)
+          0.28s   PASSED
+  ✓  Duplicate profile validation (name: Sales Executive)
+          0.07s   PASSED
+  ✓  Create role (name: CEO)
+          0.10s   PASSED
+  ✓  Create child role (name: Sales Manager / parent_id: )
+          0.09s   PASSED
+  ✓  Duplicate role (name: CEO)
+          0.08s   PASSED
+  ✓  Update field permissions (Sales Manager) (profile: Sales Manager)
+          0.07s   PASSED
+  ✓  Update field permissions (Sales Executive) (profile: Sales Executive)
+          0.10s   PASSED
+  ✓  Update field permissions (Sales Manager) (profile: Sales Manager)
+          0.08s   PASSED
+  ✓  Create Sales Manager user (email: manager_69abfe42061ce@example.com)
+          0.06s   PASSED
+  ✓  Create Sales Executive user (email: executive_69abfe42643c9@example.com)
+          0.06s   PASSED
+  ✓  Duplicate email validation (email: manager_69abfe42061ce@example.com)
+          0.05s   PASSED
+  ✗  Manager field visibility (leadScore) (visible: )
+          0.16s   FAILED
+  ✓  Executive field hidden (leadScore) (hidden: 1)
+          0.11s   PASSED
+  ✓  Executive unauthorized inline edit (field: leadScore)
+          0.11s   PASSED
+
+───────────────────────────────────────────────────────────────────────────
+  TOTAL: 35 tests  |  33 passed  |  2 failed
+───────────────────────────────────────────────────────────────────────────
