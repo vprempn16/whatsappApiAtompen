@@ -33,15 +33,7 @@ class CommentTest extends TestCase
         if ($this->token) {
             $lead = $this->postJson('/api/v1/Lead/new', [
                 'data' => [
-                    'values' => [
-                        'firstName' => 'Comment',
-                        'lastName' => 'TestLead',
-                        'email' => 'commenttest_lead@atompen.test',
-                        'phoneNumber' => '9990003333',
-                        'company' => 'CommentCo',
-                        'leadStatus' => 'New',
-                        'leadSource' => 'Website',
-                    ],
+                    'values' => \Tests\Helpers\PayloadGenerator::generate('Lead', [], true),
                 ],
             ], ['Authorization' => 'Bearer ' . $this->token]);
             $this->leadId = $lead->json('data.id') ?? '';
@@ -58,9 +50,14 @@ class CommentTest extends TestCase
         $this->assertNotEmpty($this->leadId, 'Lead must be created in setUp');
 
         $response = $this->postJson('/api/v1/comment/new', [
-            'comment' => 'This is a test comment from CommentTest.',
-            'module' => 'Lead',
-            'entity_id' => $this->leadId,
+            'data' => [
+                'values' => [
+                    'content' => 'This is a test comment from CommentTest.',
+                ],
+                'relatedRecord' => [
+                    ['parent_module' => 'Lead', 'parent_id' => $this->leadId]
+                ]
+            ]
         ], $this->headers());
 
         $response->assertStatus(200)->assertJson(['status' => true]);

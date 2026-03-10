@@ -66,7 +66,7 @@ class FilterTest extends TestCase
 
     public function test_list_filters(): void
     {
-        $response = $this->getJson('/api/v1/filters', $this->headers());
+        $response = $this->getJson('/api/v1/filters?module=Lead', $this->headers());
         $response->assertStatus(200)->assertJson(['status' => true]);
     }
 

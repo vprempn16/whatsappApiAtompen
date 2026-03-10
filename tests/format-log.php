@@ -47,16 +47,37 @@ foreach ($testcases as $tc) {
 
     if (!empty($failures)) {
         $failed++;
-        // Use the 'message' attribute first — it's the short human-readable string
-        $message = trim((string) ($failures[0]['message'] ?? ''));
-        if (empty($message)) {
-            // Fall back to first line of element body (full stacktrace)
-            $body = (string) $failures[0];
-            $message = trim(explode("\n", $body)[0]);
+        $body = (string) $failures[0];
+        $lines = array_map('trim', explode("\n", $body));
+        $message = '';
+
+        // 1. If it's an API JSON assertion failure, grab the exact "message" string from the dump
+        if (preg_match('/"message":\s*"([^"]+)"/', $body, $match)) {
+            $message = "API Error: " . $match[1];
         }
-        // Keep only first line, strip PHPUnit class prefix if present
-        $message = trim(explode("\n", $message)[0]);
-        $message = preg_replace('/^PHPUnit\\\\.+?:\s*/i', '', $message);
+        // 2. Otherwise look for the actual PHPUnit assertion failure text
+        else {
+            foreach ($lines as $line) {
+                if (preg_match('/^(Failed asserting that|Expected response status|Expected status code|Response status code)/i', $line)) {
+                    $message = $line;
+                    break;
+                }
+            }
+        }
+
+        // 3. Fallback to the first available lines if nothing matched
+        if (empty($message)) {
+            foreach ($lines as $line) {
+                if ($line === '' || preg_match('/^Tests\\\\/', $line) || preg_match('/^Unable to find JSON/', $line))
+                    continue;
+                $message = $line;
+                break;
+            }
+        }
+        if (empty($message)) {
+            $message = trim((string) ($failures[0]['message'] ?? 'Unknown error'));
+            $message = explode("\n", $message)[0];
+        }
         $entries[] = [
             'label' => $label,
             'status' => 'FAIL',
@@ -74,37 +95,79 @@ foreach ($testcases as $tc) {
     }
 }
 
-// ── Build log ────────────────────────────────────────────────────────────────
-$sep = str_repeat('─', 65);
-$total = $passed + $failed;
+// ── Output Console & CSV ───────────────────────────────────────────────────
+$csvData = [];
 
-$lines[] = '';
-$lines[] = str_repeat('═', 65);
+// Adding the header specifically requested by the user
+$csvData[] = ['═════════════════════════════════════════════════════════════════'];
+$csvData[] = ["  TEST REPORT  ·  $now"];
+$csvData[] = ['═════════════════════════════════════════════════════════════════'];
+$csvData[] = [];
+$csvData[] = ['Icon', 'Test Name', 'Reason', 'Duration', 'Status'];
+
+$passedTotal = 0;
+$failedTotal = 0;
+
+$lines = [];
+$lines[] = '═════════════════════════════════════════════════════════════════';
 $lines[] = "  TEST REPORT  ·  $now";
-$lines[] = str_repeat('═', 65);
+$lines[] = '═════════════════════════════════════════════════════════════════';
 $lines[] = '';
 
 foreach ($entries as $e) {
-    $icon = $e['status'] === 'PASS' ? '✓' : '✗';
-    $padded = str_pad($e['label'], 50, ' ');
-    $dur = str_pad($e['duration'] . 's', 8, ' ', STR_PAD_LEFT);
-    $status = $e['status'] === 'PASS' ? 'PASSED' : 'FAILED';
-    $lines[] = "  {$icon}  {$padded} {$dur}   {$status}";
-    if ($e['reason']) {
-        $lines[] = "       └─ " . $e['reason'];
+    if ($e['status'] === 'PASS') {
+        $icon = '✓';
+        $status = 'PASSED';
+        $passedTotal++;
+    } else {
+        $icon = '✗';
+        $status = 'FAILED';
+        $failedTotal++;
     }
+
+    // Add to CSV
+    $csvData[] = [
+        $icon,
+        $e['label'],
+        $e['reason'] ?: '',
+        $e['duration'] . 's',
+        $status
+    ];
+
+    // Single-line console output
+    $paddedLabel = str_pad($e['label'], 30, ' ');
+    $paddedReason = str_pad($e['reason'] ?: ' ', 60, ' ');
+    $paddedDur = str_pad($e['duration'] . 's', 8, ' ', STR_PAD_LEFT);
+
+    $lines[] = "  {$icon}  {$paddedLabel} {$paddedReason} {$paddedDur}   {$status}";
 }
 
-$lines[] = '';
-$lines[] = $sep;
-$lines[] = "  TOTAL: {$total} tests  |  {$passed} passed  |  {$failed} failed";
-$lines[] = $sep;
-$lines[] = '';
+$total = $passedTotal + $failedTotal;
+$lines[] = "";
+$lines[] = str_repeat('─', 115);
+$lines[] = "  TOTAL: {$total} tests  |  {$passedTotal} passed  |  {$failedTotal} failed";
+$lines[] = str_repeat('─', 115);
 
-// ── Write ─────────────────────────────────────────────────────────────────────
-$content = implode("\n", $lines) . "\n";
-file_put_contents($logPath, $content);
+// Write CSV
+$fp = fopen($logPath, 'w');
+// UTF-8 BOM for Excel visibility of icons
+fputs($fp, $bom = (chr(0xEF) . chr(0xBB) . chr(0xBF)));
+foreach ($csvData as $fields) {
+    fputcsv($fp, $fields);
+}
+fclose($fp);
 
-// Print path so PowerShell can echo it
-echo "Log written to: $logPath\n";
-echo $content;
+// Write plain text LOG
+$txtLogPath = str_replace('.csv', '.log', $logPath);
+$logContent = implode("\n", $lines) . "\n";
+file_put_contents($txtLogPath, $logContent);
+
+// Delete the intermediate XML if you want to keep it totally clean
+if (file_exists($xmlPath)) {
+    unlink($xmlPath);
+}
+
+// Print paths so PowerShell can echo them
+echo "Test results written to CSV: $logPath\n";
+echo "Test results written to LOG: $txtLogPath\n\n";
+echo $logContent;

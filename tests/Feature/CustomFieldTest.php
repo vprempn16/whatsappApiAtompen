@@ -41,7 +41,8 @@ class CustomFieldTest extends TestCase
                     'fieldtype' => 'text',
                     'modulename' => 'Lead',
                     'mandatory' => '0',
-                ],
+                    'profiles' => [],
+                ]
             ], ['Authorization' => 'Bearer ' . $this->token]);
 
             $this->fieldId = $resp->json('data.id') ?? '';
@@ -60,7 +61,7 @@ class CustomFieldTest extends TestCase
 
     public function test_list_custom_fields(): void
     {
-        $response = $this->getJson('/api/v1/custom-field-creation/list', $this->headers());
+        $response = $this->getJson('/api/v1/custom-field-creation/list?module=Lead', $this->headers());
         $response->assertStatus(200)->assertJson(['status' => true]);
     }
 
@@ -77,9 +78,11 @@ class CustomFieldTest extends TestCase
         $this->assertNotEmpty($this->fieldId, 'Custom field must be created in setUp');
 
         $response = $this->putJson('/api/v1/field-update', [
-            'id' => $this->fieldId,
-            'fieldlabel' => 'Custom Test Field Updated',
-            'modulename' => 'Lead',
+            'data' => [
+                'id' => $this->fieldId,
+                'fieldlabel' => 'Custom Test Field Updated',
+                'modulename' => 'Lead',
+            ]
         ], $this->headers());
 
         $response->assertStatus(200)->assertJson(['status' => true]);
