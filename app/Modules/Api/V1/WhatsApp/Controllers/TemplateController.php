@@ -15,10 +15,12 @@ use App\Services\WhatsApp\WhatsAppApiService;
 use App\Modules\Api\V1\WhatsApp\Models\WhatsAppChannel;
 
 
-class TemplateController extends ApiController{
+class TemplateController extends ApiController
+{
 	use ResultTrait;
 
-	public function listCheck(){
+	public function listCheck()
+	{
 		$orgId = auth()->user()->organization_id;
 
 		if (!$orgId) {
@@ -59,44 +61,45 @@ class TemplateController extends ApiController{
 		]);
 	}
 
-	public function getWhatsAppTemplates(Request $request,string $channelId)
+	public function getWhatsAppTemplates(Request $request, string $channelId)
 	{
-		$data = $request->input('data.values', []);	
+		$data = $request->input('data.values', []);
 
 		$orgId = auth()->user()->organization_id;
 
-		 $module = $request->query('module'); //  (optional)
+		$module = $request->query('module'); //  (optional)
 
 		if ($orgId == '') {
 			return $this->error('organization_id required');
 		}
 
-                if ($channelId == '') {
-                        return $this->error('WhatsApp channel is required');
-                }
-
-		$service = new WhatsAppApiService($orgId,$channelId);
-
-		if($service->noService){
-			 return $this->error('This Organization has no service');
+		if ($channelId == '') {
+			return $this->error('WhatsApp channel is required');
 		}
-		
+
+		$service = new WhatsAppApiService($orgId, $channelId);
+
+		if ($service->noService) {
+			return $this->error('This Organization has no service');
+		}
+
 		$validate = $service->validateAccount();
 
-                if($validate['success'] === false){
-                        return $this->error($validate['message']);
+		if ($validate['success'] === false) {
+			return $this->error($validate['message']);
 		}
-		if(!empty($module)){
-			$response = $service->getTemplatesByModule($orgId,$channelId,$module );
-		}else{
-			$response = $service->getTemplates($orgId,$channelId);
+		if (!empty($module)) {
+			$response = $service->getTemplatesByModule($orgId, $channelId, $module);
+		} else {
+			$response = $service->getTemplates($orgId, $channelId);
 		}
-		if($response['success'] === false){
-			 return $this->error($result['message']);
+		if ($response['success'] === false) {
+			return $this->error($result['message']);
 		}
 		return $this->success($response['values']);
 	}
-	public function getMappingTemplates(Request $request){
+	public function getMappingTemplates(Request $request)
+	{
 
 		$organizationId = $request->get('organization_id');
 
@@ -107,12 +110,12 @@ class TemplateController extends ApiController{
 
 		$values = $templates->map(function ($row) {
 			return [
-				'id'                => $row->id,
-				'template_name'     => $row->template_name,
-				'language'          => $row->template_language,
+				'id' => $row->id,
+				'template_name' => $row->template_name,
+				'language' => $row->template_language,
 				'template_variable' => $row->template_variable,
-				'crm_module'        => $row->crm_module,
-				'crm_field'         => $row->crm_field,
+				'crm_module' => $row->crm_module,
+				'crm_field' => $row->crm_field,
 			];
 		});
 
@@ -122,24 +125,25 @@ class TemplateController extends ApiController{
 			]
 		]);
 	}
-	public function getTemplateByName(Request $request){
+	public function getTemplateByName(Request $request)
+	{
 		$values = $request->input('data.values');
 
 		$orgId = auth()->user()->organization_id;
-			
+
 		$request->validate([
-			'data.values.template_name'   => 'required|string',
+			'data.values.template_name' => 'required|string',
 		]);
 		$channelId = $values['channelId'];
 
-		if(empty($channelId)){
+		if (empty($channelId)) {
 			return $this->error('WhatsApp channel is required');
 		}
-		$service = new WhatsAppApiService($orgId,$channelId);
+		$service = new WhatsAppApiService($orgId, $channelId);
 
-                if($service->noService){
-                         return $this->error('This Organization has no service or Invalid account');
-                }
+		if ($service->noService) {
+			return $this->error('This Organization has no service or Invalid account');
+		}
 		$result = $service->getTemplateUsingName(
 			$values['template_name']
 		);
@@ -149,13 +153,16 @@ class TemplateController extends ApiController{
 		return $this->success($result['data']);
 	}
 
-	public function getTemplateMapping(Request $request,string $id = null){
+	public function getTemplateMapping(Request $request, string $id = null)
+	{
 		$orgId = auth()->user()->organization_id;
 		$mapping = WhatsAppTemplateFieldMapping::where(
-			'id', $id
+			'id',
+			$id
 		)->where(
-			'organization_id', $values['organization_id']
-		)->get();
+				'organization_id',
+				$values['organization_id']
+			)->get();
 
 		return response()->json([
 			'data' => [
@@ -163,7 +170,8 @@ class TemplateController extends ApiController{
 			]
 		]);
 	}
-	public function getMappingTemplateByName(Request $request,string $templateName,string $module ) {
+	public function getMappingTemplateByName(Request $request, string $templateName, string $module)
+	{
 		$orgId = auth()->user()->organization_id;
 
 		$mapping = WhatsAppTemplateFieldMapping::where('organization_id', $orgId)
@@ -171,15 +179,15 @@ class TemplateController extends ApiController{
 			->where('module', $module) // ✅ NEW condition
 			->get();
 
-	 	if($mapping->isEmpty()){
-			 return $this->error("No Mapping for this Template");
+		if ($mapping->isEmpty()) {
+			return $this->error("No Mapping for this Template");
 		}
 		return $this->success($mapping);
 	}
 	public function save(Request $request, string $channelId, string $templateId)
 	{
 		$orgId = auth()->user()->organization_id;
-		$data  = $request->input('data.values', []);
+		$data = $request->input('data.values', []);
 
 		$service = new WhatsAppApiService($orgId, $channelId);
 		if ($service->noService) {
@@ -224,7 +232,7 @@ class TemplateController extends ApiController{
 			return $this->success($result);
 
 		} catch (\Throwable $e) {
-			return $this->error($e->getMessage());
+			return $this->errorFromException($e, 'Failed to load template mapping');
 		}
 	}
 	public function syncSingleTemplate(
@@ -245,28 +253,29 @@ class TemplateController extends ApiController{
 			return $this->success($result);
 
 		} catch (\Throwable $e) {
-			return $this->error($e->getMessage());
+			return $this->errorFromException($e, 'Failed to sync template');
 		}
 	}
 
 
-	public function previewTemplate(Request $request,string $module ,string $recordId,string $channelId,string $templateId) {
+	public function previewTemplate(Request $request, string $module, string $recordId, string $channelId, string $templateId)
+	{
 		$orgId = auth()->user()->organization_id;
 		$template = WhatsAppTemplate::where('organization_id', $orgId)
 			->where('whatsapp_channel_id', $channelId)
 			->where('id', $templateId)
 			->where('module', $module)
 			->first();
-		
+
 		if (!$templateId) {
 			return $this->error('Template not found');
 		}
 		$service = new WhatsAppApiService($orgId, $channelId);
-                if ($service->noService) {
-                        return $this->error('Invalid or inactive WhatsApp channel');
+		if ($service->noService) {
+			return $this->error('Invalid or inactive WhatsApp channel');
 		}
 
-		$check = $service->validateTemplateMappings($orgId,$templateId,$module);
+		$check = $service->validateTemplateMappings($orgId, $templateId, $module);
 
 		if ($check['success'] === false) {
 			return $this->error($check['message'] . ' Missing variables: ' . implode(', ', $check['missing_variables'] ?? []));
@@ -295,6 +304,20 @@ class TemplateController extends ApiController{
 			$valueMap[$map->template_variable] = (string) ($record->{$fieldName} ?? '');
 		}
 
+		// Check if any mapped field has an empty value on this record
+		$missingFields = [];
+		foreach ($mappings as $map) {
+			$varName = $map->template_variable;
+			if (!isset($valueMap[$varName]) || $valueMap[$varName] === '') {
+				$missingFields[] = $map->crm_field . ' ({{' . $varName . '}})';
+			}
+		}
+		if (!empty($missingFields)) {
+			return $this->error(
+				'Record is missing values for: ' . implode(', ', $missingFields)
+			);
+		}
+
 		$preview = [];
 
 		foreach ($template->components as $component) {
@@ -320,9 +343,9 @@ class TemplateController extends ApiController{
 				foreach ($component['buttons'] as $index => $btn) {
 
 					$button = [
-						'type'  => 'button',
+						'type' => 'button',
 						'index' => $index,
-						'text'  => $btn['text'],
+						'text' => $btn['text'],
 						'button_type' => $btn['type'] // URL / PHONE_NUMBER / QUICK_REPLY
 					];
 
@@ -340,20 +363,20 @@ class TemplateController extends ApiController{
 		}
 		return $this->success([
 			'templateId' => $templateId,
-			'module'   => $module,
-			'recordId'=> $recordId,
-			'preview'  => $preview
+			'module' => $module,
+			'recordId' => $recordId,
+			'preview' => $preview
 		]);
 	}
 	private function replaceVars(string $text, array $values): string
 	{
 		foreach ($values as $key => $val) {
 			// Named {{name}}
-			$text = str_replace('{{'.$key.'}}', $val, $text);
+			$text = str_replace('{{' . $key . '}}', $val, $text);
 
 			// Positional {{1}}
 			if (is_numeric($key)) {
-				$text = str_replace('{{'.$key.'}}', $val, $text);
+				$text = str_replace('{{' . $key . '}}', $val, $text);
 			}
 		}
 		return $text;

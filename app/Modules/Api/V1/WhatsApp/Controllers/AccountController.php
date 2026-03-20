@@ -67,6 +67,20 @@ class AccountController extends Controller
 			'channel' => $result['channel']
 		], 'WhatsApp account connected successfully');
 	}
+	public function delete(string $channelId)
+	{
+		$orgId = auth()->user()->organization_id;
+
+		$service = new WhatsAppApiService($orgId);
+
+		$result = $service->deleteAccount($orgId, $channelId);
+
+		if ($result['success'] === false) {
+			return $this->error($result['message']);
+		}
+
+		return $this->success([], $result['message']);
+	}
 	public function healthCheck()
 	{
 		$orgId = auth()->user()->organization_id;

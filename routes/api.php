@@ -22,6 +22,9 @@ use App\Modules\Api\V1\User\Controllers\UserController;
 use App\Modules\Api\V1\Quotation\Controllers\QuotationController;
 use App\Modules\Api\V1\Invoice\Controllers\InvoiceController;
 
+#AI CHAT
+use App\Modules\Api\V1\AIChat\Controllers\AIChatController;
+
 #WHATSAPP
 use App\Modules\Api\V1\WhatsApp\Controllers\AccountController;
 use App\Modules\Api\V1\WhatsApp\Controllers\ConversationController;
@@ -43,6 +46,8 @@ use App\Modules\Api\V1\Zapier\Controllers\ZapierSettingsController;
 use App\Modules\Api\V1\Zapier\Controllers\ZapierImportLogController;
 use App\Modules\Api\V1\Zapier\Controllers\ZapierWebhookController;
 use App\Modules\Api\V1\Zapier\Controllers\ZapierCachedImportController;
+use App\Modules\Api\V1\DataImport\Controllers\DataImportController;
+use App\Modules\Api\V1\GoogleCalendar\Controllers\GoogleCalendarController;
 
 #MAILBOX
 use App\Modules\Api\V1\Mailbox\Controllers\FolderController;
@@ -54,9 +59,6 @@ use App\Modules\Api\V1\Mailbox\Controllers\SignatureController;
 use App\Modules\Api\V1\Mailbox\Controllers\SentController;
 
 
-use App\Modules\Api\V1\Workflow\Controllers\WorkflowController;
-use App\Modules\Api\V1\Workflow\Controllers\WorkflowActionController;
-use App\Modules\Api\V1\Workflow\Controllers\WorkflowActionTypeController;
 
 Route::prefix('v1')->middleware('api')->group(function () {
 	// ========================================
@@ -72,6 +74,8 @@ Route::prefix('v1')->middleware('api')->group(function () {
 		->middleware('throttle:5,1'); // 5 attempts per minute
 	Route::post('logout', [AuthController::class, 'logout'])
 		->middleware('auth:sanctum');
+	Route::get('allowed-modules', [AuthController::class, 'allowedModules'])
+		->middleware('auth:sanctum');
 	Route::get('login/google', [GoogleAuthController::class, 'getSigninUrl']);
 	Route::get('login/google/callback', [GoogleAuthController::class, 'handleGoogleCallback']);
 
@@ -86,10 +90,25 @@ Route::prefix('v1')->middleware('api')->group(function () {
 	Route::post('zapier/webhook/{module}', [ZapierWebhookController::class, 'handle'])
 		->middleware('throttle:60,1');
 
+	// Google Calendar OAuth callback (PUBLIC – called by Google, no Sanctum)
+	Route::get('google-calendar/callback', [GoogleCalendarController::class, 'callback']);
+
 	// ========================================
 	// PROTECTED ROUTES (Require Authentication)
 	// ========================================
 	Route::middleware('auth:sanctum')->group(function () {
+
+		// ========================================
+		// Google Calendar Sync (authenticated)
+		// ========================================
+		Route::prefix('google-calendar')->group(function () {
+			Route::get('connect', [GoogleCalendarController::class, 'connect']);
+			Route::post('disconnect', [GoogleCalendarController::class, 'disconnect']);
+			Route::get('sync-status', [GoogleCalendarController::class, 'syncStatus']);
+			Route::get('list-calendars', [GoogleCalendarController::class, 'listCalendars']);
+		});
+
+
 
 
 		// ========================================
@@ -122,6 +141,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
 		Route::prefix('settings/whatsapp')->group(function () {
 			Route::get('/account-check', [AccountController::class, 'healthCheck']);
 			Route::post('/account-info/save', [AccountController::class, 'save']);
+			Route::delete('/account-info/{channelId}', [AccountController::class, 'delete']);
 			Route::get('/channels', [AccountController::class, 'getByOrg']);
 
 			Route::post('/conversations/{id}/status', [ConversationController::class, 'updateStatus']);
@@ -183,7 +203,7 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::get('inbox', [MailboxController::class, 'index']);
 			Route::get('sync_all/server/{mailServerId}', [MailboxController::class, 'syncAll']);
 			Route::get('server/{mailServerId}/folder/{folderId}/sync', [MailboxController::class, 'syncFolder']);
-			Route::get('email/{id}', [MailboxController::class, 'show']);
+			Route::get('server/{mailServerId}/email/{id}', [MailboxController::class, 'show']);
 			Route::post('compose', [MailboxController::class, 'send']);
 			Route::post('bulk-action', [MailboxController::class, 'bulkAction']);
 			Route::post('action', [MailboxController::class, 'bulkAction']); // Alias for single action with single ID in array
@@ -219,8 +239,6 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			->middleware('throttle:60,1'); // 60 requests per minute
 		Route::get('filter/{module}', [GlobalSearchIndexController::class, 'filter'])
 			->middleware('throttle:60,1');
-		Route::post('global-search', [GlobalSearchIndexController::class, 'globalSearch'])
-			->middleware('throttle:30,1'); // 30 requests per minute for global search
 		Route::get('global-search', [GlobalSearchIndexController::class, 'globalSearch'])
 			->middleware('throttle:30,1');
 
@@ -250,32 +268,27 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::post('profile_fields', [ProfileController::class, 'profile_fields']);
 			Route::post('profile_global_actions', [ProfileController::class, 'profile_global_actions']);
 			Route::post('profile_module', [ProfileController::class, 'profile_module']);
-			Route::post('global_actions', [ProfileController::class, 'global_actions']);
+			Route::post('global_actions', [ProfileController::class, 'global_acti ons']);
 			Route::get('profile/{module}/fields', [ProfileController::class, 'profileModuleFields']);
 			Route::get('profile/modules', [ProfileController::class, 'portalModules']);
 			Route::post('profile/repair', [ProfileController::class, 'repair']);
 			Route::delete('profile/{id}', [ProfileController::class, 'delete']);
-			// Workflow Management
-			Route::prefix('workflow')->group(function () {
-				Route::get('/all', [WorkflowController::class, 'index']);
-				Route::get('/new', [WorkflowController::class, 'store']); // Fallback support if needed
-				Route::post('/new', [WorkflowController::class, 'store']);
 
-				// Action Types CRUD
-				Route::get('/action_types/list', [WorkflowActionTypeController::class, 'index']);
-				Route::post('/action_types/new', [WorkflowActionTypeController::class, 'store']);
-				Route::get('/action_types/{id}', [WorkflowActionTypeController::class, 'show']);
-				Route::post('/action_types/{id}', [WorkflowActionTypeController::class, 'update']);
-				Route::delete('/action_types/{id}', [WorkflowActionTypeController::class, 'destroy']);
-
-				Route::get('/actions/types', [WorkflowActionController::class, 'getActionTypes']);
-				Route::get('/actions/list', [WorkflowActionController::class, 'index']);
-				Route::post('/actions/new', [WorkflowActionController::class, 'store']);
-				Route::get('/actions/get_params/{action_type_id}', [WorkflowActionController::class, 'getParams']);
-				Route::post('/actions/{id}', [WorkflowActionController::class, 'update']);
-				Route::delete('/actions/{id}', [WorkflowActionController::class, 'destroy']);
-				Route::post('/{id}', [WorkflowController::class, 'update']);
-				Route::get('/{module}', [WorkflowController::class, 'getByModule']);
+			// Data Import
+			Route::prefix('data-import')->group(function () {
+				Route::post('upload', [DataImportController::class, 'upload']);
+				Route::post('jobs', [DataImportController::class, 'storeJob']);
+				Route::get('jobs', [DataImportController::class, 'indexJobs']);
+				Route::get('jobs/{id}', [DataImportController::class, 'showJob']);
+				Route::get('jobs/{id}/errors', [DataImportController::class, 'showJobErrors']);
+				Route::get('modules', [DataImportController::class, 'modules']);
+				Route::get('modules/{module}/fields', [DataImportController::class, 'moduleFields']);
+				Route::get('mapping-templates', [DataImportController::class, 'indexTemplates']);
+				Route::post('detect-mapping', [DataImportController::class, 'detectMapping']);
+				Route::post('validate-mapping', [DataImportController::class, 'validateMapping']);
+				Route::post('preview', [DataImportController::class, 'preview']);
+				Route::post('mapping-templates', [DataImportController::class, 'storeTemplate']);
+				Route::delete('mapping-templates/{id}', [DataImportController::class, 'destroyTemplate']);
 			});
 		});
 
@@ -308,6 +321,56 @@ Route::prefix('v1')->middleware('api')->group(function () {
 				->where('uuid', '[0-9a-fA-F\-]{36}');
 		});
 
+		// AI Chat
+		Route::prefix('ai-chat')->group(function () {
+			// Main processing endpoints
+			Route::post('process', [AIChatController::class, 'process']);
+			Route::post('intent', [AIChatController::class, 'intent']);
+			Route::post('query', [AIChatController::class, 'query']);
+			Route::post('execute', [AIChatController::class, 'execute']);
+			Route::get('suggestions', [AIChatController::class, 'suggestions']);
+			Route::get('capabilities', [AIChatController::class, 'capabilities']);
+
+			// Session management
+			Route::post('sessions', [AIChatController::class, 'createSession']);
+			Route::get('sessions', [AIChatController::class, 'listSessions']);
+			Route::get('sessions/{session_id}', [AIChatController::class, 'getSession']);
+			Route::put('sessions/{session_id}', [AIChatController::class, 'updateSession']);
+			Route::delete('sessions/{session_id}', [AIChatController::class, 'deleteSession']);
+			Route::get('sessions/{session_id}/messages', [AIChatController::class, 'getSession']);
+			Route::post('sessions/{session_id}/messages', [AIChatController::class, 'sendMessage']);
+
+			// Settings endpoints (Admin only)
+			Route::get('settings', [AIChatController::class, 'getSettings']);
+			Route::put('settings', [AIChatController::class, 'updateSettings']);
+			Route::get('settings/modules', [AIChatController::class, 'getModulesSettings']);
+			Route::put('settings/modules', [AIChatController::class, 'updateModulesSettings']);
+
+			// Usage/Analytics endpoints
+			Route::get('usage', [AIChatController::class, 'getUsage']);
+			Route::get('usage/summary', [AIChatController::class, 'getUsageSummary']);
+			Route::get('usage/by-user', [AIChatController::class, 'getUsageByUser']);
+			Route::get('usage/tokens', [AIChatController::class, 'getTokenUsage']);
+
+			// Cache management endpoints (Admin only)
+			Route::get('cache/stats', [AIChatController::class, 'getCacheStats']);
+			Route::post('cache/invalidate', [AIChatController::class, 'invalidateCache']);
+			Route::post('cache/warm', [AIChatController::class, 'warmCache']);
+			Route::delete('cache/clear', [AIChatController::class, 'clearCache']);
+
+			// Intent template management (Admin only)
+			Route::get('templates', [AIChatController::class, 'listTemplates']);
+			Route::post('templates', [AIChatController::class, 'createTemplate']);
+			Route::put('templates/{id}', [AIChatController::class, 'updateTemplate']);
+			Route::delete('templates/{id}', [AIChatController::class, 'deleteTemplate']);
+			Route::post('templates/test', [AIChatController::class, 'testTemplate']);
+
+			// Module metadata
+			Route::get('modules/meta', [AIChatController::class, 'getModulesMeta']);
+		});
+		// ========================================
+		// Quotation Specific Routes
+		// ========================================
 		// ========================================
 		// Quotation Specific Routes
 		// ========================================
@@ -399,13 +462,13 @@ Route::prefix('v1')->middleware('api')->group(function () {
 			Route::delete('{id}', [RecordController::class, 'destroy']);
 			Route::get('{id}/edit', [RecordController::class, 'edit']);
 			Route::get('{id}/audit-log', [RecordController::class, 'getAuditLogs']);
+			Route::get('{recordId}/Mails/records', [MailLogController::class, 'getMailsByRecord']);
 			Route::get('{id}/{relatedmodule}/records', [RelatedRecords::class, 'index']);
 
 			// Module-based mail sending
 			Route::post('{recordId}/mail/send', [MailSendController::class, 'sendFromRecord']);
 			Route::post('{recordId}/mailbox/compose', [MailboxController::class, 'composeFromRecord']);
 			Route::get('{recordId}/getEmailAddress', [MailSendController::class, 'getEmailAddress']);
-			Route::get('{recordId}/mails', [MailLogController::class, 'getMailsByRecord']);
 		});
 	});
 });

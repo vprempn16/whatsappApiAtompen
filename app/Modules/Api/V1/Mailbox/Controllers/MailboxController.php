@@ -131,7 +131,7 @@ class MailboxController extends ApiController
     /**
      * Get Single Email
      */
-    public function show($id)
+    public function show($mailServerId, $id)
     {
         $orgId = auth()->user()->organization_id;
 
@@ -149,7 +149,7 @@ class MailboxController extends ApiController
 
         $id = $validator->validated()['id'];    
         try {
-            $email = $this->mailboxService->getEmail($id, $orgId);
+            $email = $this->mailboxService->getEmail($id, $orgId, $mailServerId);
             return $this->success($email, 'Email details fetched');
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return $this->error('Email not found');

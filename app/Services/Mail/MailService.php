@@ -334,7 +334,7 @@ class MailService
 
     public function sendMail(array $data, $module = null, $recordId = null)
     {
-        $orgId = $data['organization_id'] ?? auth()->user()->organization_id;
+        $orgId = $data['organization_id'] ?? (auth()->user() ? auth()->user()->organization_id : null);
         $userId = $data['user_id'] ?? auth()->id();
 
         try {
@@ -343,15 +343,8 @@ class MailService
                 ->where('deleted', 0)
                 ->firstOrFail();
 
-            try {
-                $password = Crypt::decryptString($server->password);
-            } catch (\Exception $e) {
-                $password = $server->password;
-            }
-            \Log::info("send mail log", [
-                "password" => $password,
-                "server" => $server
-            ]);
+            $password = Crypt::decryptString($server->password);
+
             // Dynamic SMTP config
             Config::set('mail.mailers.dynamic', [
                 'transport' => 'smtp',
@@ -397,7 +390,17 @@ class MailService
                 }
             }
 
-            Mail::mailer('dynamic')->to($data['to'])->send($mailable);
+            $mail = Mail::to($data['to']);
+
+            if (!empty($data['cc'])) {
+                $mail->cc($data['cc']);
+            }
+
+            if (!empty($data['bcc'])) {
+                $mail->bcc($data['bcc']);
+            }
+
+            $mail->send($mailable);
 
             // Log success
             $mailLog = $this->createLog(
@@ -495,23 +498,17 @@ class MailService
                 $e->getMessage(),
                 []
             );
-            \Log::info("error", ['error' => $e->getMessage()]);
+
             return ['status' => false, 'error' => $e->getMessage()];
         }
     }
     private function applySmtpConfig($server)
     {
-        try {
-            $password = Crypt::decryptString($server->password);
-        } catch (\Exception $e) {
-            $password = $server->password;
-        }
-
         config([
             'mail.mailers.smtp.host' => $server->host,
             'mail.mailers.smtp.port' => $server->port,
             'mail.mailers.smtp.username' => $server->username,
-            'mail.mailers.smtp.password' => $password,
+            'mail.mailers.smtp.password' => $server->password,
             'mail.mailers.smtp.encryption' => $server->encryption,
             'mail.from.address' => $server->from_email,
             'mail.from.name' => $server->from_name,
@@ -559,6 +556,7 @@ class MailService
             'username' => $data['username'],
             'password' => $data['password'],
             'folder' => $data['folder'] ?? 'INBOX',
+            'last_sync_at' => $data['last_sync_at'] ?? null,
             'created_at' => now(),
             'deleted' => 0,
         ]);
@@ -635,6 +633,7 @@ class MailService
             'encryption' => $encryption,
             'username' => $username,
             'folder' => $folder,
+            'last_sync_at' => $data['last_sync_at'] ?? $imap->last_sync_at,
             ...$data, // includes password if set
             'updated_at' => now(),
         ]);
@@ -1310,7 +1309,7 @@ class MailService
             return false;
         }
 
-        //$body = $this->getEmailBody($imap, $uid);
+        $body = $this->getEmailBody($imap, $uid);
 
         $mailLog = $this->createLog(
             $server->organization_id,
@@ -2325,7 +2324,7 @@ class MailService
      * @param string $module
      * @param string $recordId
      * @param int $perPage
-     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     * @return array
      */
     public function getMailsByRecord(string $orgId, string $module, string $recordId, int $perPage = 20)
     {
@@ -2345,7 +2344,7 @@ class MailService
             ->paginate($perPage);
 
         return [
-            'emails' => $paginator->items(),
+            'relatedRecords' => $paginator->items(),
             'meta' => [
                 'current_page' => $paginator->currentPage(),
                 'last_page' => $paginator->lastPage(),

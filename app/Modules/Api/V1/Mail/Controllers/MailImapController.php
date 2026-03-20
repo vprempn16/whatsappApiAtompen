@@ -77,6 +77,7 @@ class MailImapController extends ApiController
             'username' => 'required|string',
             'password' => 'required|string',
             'folder' => 'required|string',
+            'synced_from' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -87,6 +88,7 @@ class MailImapController extends ApiController
         $data = $validator->validated();
         $data['organization_id'] = $orgId;
         $data['created_by'] = $userId;
+        $data['last_sync_at'] = $data['synced_from'] ?? null;
 
         try {
             $imap = $this->mailService->createImapServer($data);
@@ -120,6 +122,7 @@ class MailImapController extends ApiController
             'folder' => 'required|string',
 	    'last_uid' =>  'nullable|integer',
 	    'min_uid' => 'nullable|integer',
+            'synced_from' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -129,6 +132,10 @@ class MailImapController extends ApiController
 
         $data = $validator->validated();
         $data['organization_id'] = $orgId;
+        
+        if (array_key_exists('synced_from', $data)) {
+            $data['last_sync_at'] = $data['synced_from'];
+        }
 
         try {
             $imap = $this->mailService->updateImapServer($id, $data);

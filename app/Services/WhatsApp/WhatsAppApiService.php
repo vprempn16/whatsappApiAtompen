@@ -20,8 +20,9 @@ use Illuminate\Support\Facades\DB;
 use Exception;
 
 
-class WhatsAppApiService{
-	        use ResultTrait;
+class WhatsAppApiService
+{
+	use ResultTrait;
 	protected string $accessToken;
 	protected string $phoneNumberId;
 	public ?string $channelId = null;
@@ -29,7 +30,7 @@ class WhatsAppApiService{
 	public bool $noService = false;
 	public string $businessId = '';
 	protected string $baseUrl = 'https://graph.facebook.com/v22.0';
-	
+
 	public function __construct(string $organizationId, string $channelId = '')
 	{
 		$this->organizationId = $organizationId;
@@ -52,9 +53,9 @@ class WhatsAppApiService{
 				return;
 			}
 
-			$this->accessToken   = $config->access_token;
+			$this->accessToken = $config->access_token;
 			$this->phoneNumberId = $config->phone_number_id;
-			$this->businessId    = $config->business_id;
+			$this->businessId = $config->business_id;
 		}
 	}
 	public function list()
@@ -71,7 +72,8 @@ class WhatsAppApiService{
 	{
 		$businessId = $this->businessId ?: ($data['business_id'] ?? '');
 		$accessToken = $this->accessToken ?: ($data['access_token'] ?? '');
-	
+		$phoneNumberId = $this->phoneNumberId ?: ($data['phone_number_id'] ?? '');
+
 		if (empty($businessId)) {
 			return [
 				'success' => false,
@@ -98,12 +100,42 @@ class WhatsAppApiService{
 			];
 		}
 		// business id must match
-		if(($response['response']['id'] ?? null) !== $businessId) {
+		if (($response['response']['id'] ?? null) !== $businessId) {
 			return [
 				'success' => false,
 				'message' => 'Business ID mismatch'
 			];
 		}
+
+		// Validate phone_number_id against Meta Graph API
+
+		if (empty($phoneNumberId)) {
+			return [
+				'success' => false,
+				'message' => 'Phone Number ID Required'
+			];
+		}
+		$phoneUrl = "{$this->baseUrl}/{$phoneNumberId}";
+		$phoneResponse = self::request($phoneUrl, $accessToken, ['fields' => 'id'], 'GET');
+		if (($phoneResponse['success'] ?? false) !== true) {
+			return [
+				'success' => false,
+				'message' => 'Unable to validate Phone Number ID with WhatsApp API'
+			];
+		}
+		if (!empty($phoneResponse['response']['error'])) {
+			return [
+				'success' => false,
+				'message' => $phoneResponse['response']['error']['message'] ?? 'Invalid Phone Number ID'
+			];
+		}
+		if (($phoneResponse['response']['id'] ?? null) !== $phoneNumberId) {
+			return [
+				'success' => false,
+				'message' => 'Phone Number ID mismatch'
+			];
+		}
+
 		return [
 			'success' => true
 		];
@@ -111,7 +143,7 @@ class WhatsAppApiService{
 	public function saveAccount(string $orgId, array $data): array
 	{
 		// Basic required fields
-		foreach (['app_id','app_secret','phone_number_id','business_id','access_token'] as $field) {
+		foreach (['app_id', 'app_secret', 'phone_number_id', 'business_id', 'access_token'] as $field) {
 			if (empty($data[$field])) {
 				return [
 					'success' => false,
@@ -132,16 +164,16 @@ class WhatsAppApiService{
 			],
 			[
 				'id' => (string) \Illuminate\Support\Str::uuid(),
-				'name'            => $data['name'] ?? 'WhatsApp Account',
-				'desc'            => $data['description'] ?? null,
-				'app_id'          => $data['app_id'],
-				'app_secret'      => $data['app_secret'],
+				'name' => $data['name'] ?? 'WhatsApp Account',
+				'desc' => $data['description'] ?? null,
+				'app_id' => $data['app_id'],
+				'app_secret' => $data['app_secret'],
 				'phone_number_id' => $data['phone_number_id'],
-				'business_id'     => $data['business_id'],
-				'access_token'    => $data['access_token'],
-				'is_active'       => true,
-				'created_by'      => auth()->id(),
-				'updated_at'      => now(),
+				'business_id' => $data['business_id'],
+				'access_token' => $data['access_token'],
+				'is_active' => true,
+				'created_by' => auth()->id(),
+				'updated_at' => now(),
 			]
 		);
 		return [
@@ -149,7 +181,28 @@ class WhatsAppApiService{
 			'channel' => $channel
 		];
 	}
-	public static function request(string $url,string $accessToken,array $payload = [],string $method = 'POST',array $headers = [],bool $isMultipart = false): array {
+	public function deleteAccount(string $orgId, string $channelId): array
+	{
+		$channel = WhatsAppChannel::where('id', $channelId)
+			->where('organization_id', $orgId)
+			->first();
+
+		if (!$channel) {
+			return [
+				'success' => false,
+				'message' => 'WhatsApp account not found'
+			];
+		}
+
+		$channel->delete();
+
+		return [
+			'success' => true,
+			'message' => 'WhatsApp account deleted successfully'
+		];
+	}
+	public static function request(string $url, string $accessToken, array $payload = [], string $method = 'POST', array $headers = [], bool $isMultipart = false): array
+	{
 		$ch = curl_init($url);
 		$defaultHeaders = [
 			'Authorization: Bearer ' . $accessToken,
@@ -159,33 +212,33 @@ class WhatsAppApiService{
 		}
 		$options = [
 			CURLOPT_RETURNTRANSFER => true,
-			CURLOPT_TIMEOUT        => 30,
-			CURLOPT_HTTPHEADER     => array_merge($defaultHeaders, $headers),
+			CURLOPT_TIMEOUT => 30,
+			CURLOPT_HTTPHEADER => array_merge($defaultHeaders, $headers),
 		];
 		switch (strtoupper($method)) {
-		case 'POST':
-			$options[CURLOPT_POST] = true;
-			$options[CURLOPT_POSTFIELDS] = $isMultipart ? $payload : json_encode($payload);
-			break;
+			case 'POST':
+				$options[CURLOPT_POST] = true;
+				$options[CURLOPT_POSTFIELDS] = $isMultipart ? $payload : json_encode($payload);
+				break;
 
-		case 'PUT':
-		case 'PATCH':
-			$options[CURLOPT_CUSTOMREQUEST] = $method;
-			$options[CURLOPT_POSTFIELDS] = $isMultipart ? $payload : json_encode($payload);
-			break;
-		case 'GET':
-			if (!empty($payload)) {
-				$url .= '?' . http_build_query($payload);
-				curl_setopt($ch, CURLOPT_URL, $url);
-			}
-			break;
-		case 'DELETE':
-			$options[CURLOPT_CUSTOMREQUEST] = 'DELETE';
-			break;
+			case 'PUT':
+			case 'PATCH':
+				$options[CURLOPT_CUSTOMREQUEST] = $method;
+				$options[CURLOPT_POSTFIELDS] = $isMultipart ? $payload : json_encode($payload);
+				break;
+			case 'GET':
+				if (!empty($payload)) {
+					$url .= '?' . http_build_query($payload);
+					curl_setopt($ch, CURLOPT_URL, $url);
+				}
+				break;
+			case 'DELETE':
+				$options[CURLOPT_CUSTOMREQUEST] = 'DELETE';
+				break;
 		}
 		curl_setopt_array($ch, $options);
 		$response = curl_exec($ch);
-		$error    = curl_error($ch);
+		$error = curl_error($ch);
 		$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 		curl_close($ch);
 		if ($error) {
@@ -210,8 +263,8 @@ class WhatsAppApiService{
 
 		return [
 			'httpCode' => $httpCode,
-			'success'  => $success,
-			'message'  => $errorMsg,
+			'success' => $success,
+			'message' => $errorMsg,
 			'response' => $decoded,
 		];
 	}
@@ -232,7 +285,7 @@ class WhatsAppApiService{
 				if (isset($component['example']['body_text'])) {
 					foreach ($component['example']['body_text'][0] as $index => $val) {
 						$variables[] = [
-							'template_variable' => (string)($index + 1),
+							'template_variable' => (string) ($index + 1),
 							'component_type' => 'BODY',
 							'button_index' => null,
 						];
@@ -307,15 +360,15 @@ class WhatsAppApiService{
 
 		return [
 			'values' => [
-				'module'      => $template->module ?? '',
+				'module' => $template->module ?? '',
 				'template_id' => $template->id,
-				'language'    => $template->language,
-				'mappings'    => $mappings->map(function ($m) {
+				'language' => $template->language,
+				'mappings' => $mappings->map(function ($m) {
 					return [
 						'template_variable' => $m->template_variable,
-						'crm_module'        => $m->crm_module ?? '',
-						'crm_field'         => $m->crm_field ?? '',
-						'component_type'    => strtolower($m->component_type),
+						'crm_module' => $m->crm_module ?? '',
+						'crm_field' => $m->crm_field ?? '',
+						'component_type' => strtolower($m->component_type),
 					];
 				})->values()
 			]
@@ -338,10 +391,10 @@ class WhatsAppApiService{
 			throw new \Exception('Template not found');
 		}
 
-		 $template->update([
-  		      'module' => $data['module']
-   	 	]);
-	
+		$template->update([
+			'module' => $data['module']
+		]);
+
 		foreach ($data['mappings'] as $map) {
 
 			if (
@@ -359,8 +412,8 @@ class WhatsAppApiService{
 				->where('template_id', $templateId)
 				->where('template_variable', $map['template_variable'])
 				->update([
-					'crm_module'     => $map['crm_module'],
-					'crm_field'      => $map['crm_field'],
+					'crm_module' => $map['crm_module'],
+					'crm_field' => $map['crm_field'],
 					'component_type' => strtoupper($map['component_type'] ?? 'BODY'),
 				]);
 		}
@@ -389,13 +442,13 @@ class WhatsAppApiService{
 			'GET'
 		);
 		$response = self::request(
-                        $url,
-                        $this->accessToken,
-                        [
-                                'name' => $template->template_name
-                        ],
-                        'GET'
-                );
+			$url,
+			$this->accessToken,
+			[
+				'name' => $template->template_name
+			],
+			'GET'
+		);
 
 		if (!empty($response['response']['error'] ?? null)) {
 			throw new \Exception(
@@ -411,17 +464,17 @@ class WhatsAppApiService{
 		/** Step 3: Update whatsapp_templates */
 		$template->update([
 			'template_name' => $tpl['name'],
-			'language'      => $tpl['language'],
-			'format'        => $tpl['parameter_format'],
-			'status'        => $tpl['status'],
-			'components'    => $tpl['components'] ?? [],
-			'category'      => $tpl['category'] ?? null,
+			'language' => $tpl['language'],
+			'format' => $tpl['parameter_format'],
+			'status' => $tpl['status'],
+			'components' => $tpl['components'] ?? [],
+			'category' => $tpl['category'] ?? null,
 		]);
 
 		/** Step 4: Rebuild mappings */
 		return $this->rebuildTemplateMappings($template);
 	}
-	
+
 	public function rebuildTemplateMappings(WhatsAppTemplate $template): array
 	{
 		/** Step 1: Delete old mappings */
@@ -433,7 +486,7 @@ class WhatsAppApiService{
 		/** Step 2: Extract variables */
 		$vars = $this->extractTemplateVariables([
 			'parameter_format' => $template->format,   // POSITIONAL | NAMED
-			'components'       => $template->components ?? [],
+			'components' => $template->components ?? [],
 		]);
 
 		$mappingResponse = [];
@@ -441,37 +494,38 @@ class WhatsAppApiService{
 		/** Step 3: Create new mappings */
 		foreach ($vars as $v) {
 			WhatsAppTemplateFieldMapping::create([
-				'id'                => (string) Str::uuid(),
-				'organization_id'   => $this->organizationId,
-				'template_id'       => $template->id,
+				'id' => (string) Str::uuid(),
+				'organization_id' => $this->organizationId,
+				'template_id' => $template->id,
 				'template_language' => $template->language,
 				'template_variable' => $v['template_variable'],
-				'component_type'    => strtoupper($v['component_type']),
-				'button_index'      => $v['button_index'] ?? null,
-				'crm_module'        => null,
-				'crm_field'         => null,
+				'component_type' => strtoupper($v['component_type']),
+				'button_index' => $v['button_index'] ?? null,
+				'crm_module' => null,
+				'crm_field' => null,
 			]);
 
 			$mappingResponse[] = [
 				'template_variable' => $v['template_variable'],
-				'crm_module'        => '',
-				'crm_field'         => '',
-				'component_type'    => strtolower($v['component_type']),
+				'crm_module' => '',
+				'crm_field' => '',
+				'component_type' => strtolower($v['component_type']),
 			];
 		}
 
 		/** Step 4: Return frontend-ready payload */
 		return [
 			'values' => [
-				'module'      => '',
+				'module' => '',
 				'template_id' => $template->id,
-				'language'    => $template->language,
-				'mappings'    => $mappingResponse
+				'language' => $template->language,
+				'mappings' => $mappingResponse
 			]
 		];
 	}
 
-	public function saveMapping(string $orgId,string $channelId,string $templateId,array $data = []) {
+	public function saveMapping(string $orgId, string $channelId, string $templateId, array $data = [])
+	{
 		// Validate template existence
 		$template = WhatsAppTemplate::where('id', $templateId)
 			->where('organization_id', $orgId)
@@ -494,7 +548,7 @@ class WhatsAppApiService{
 			}
 			$templateArr = [
 				'parameter_format' => $template->format,
-				'components'       => $template->components,
+				'components' => $template->components,
 			];
 			$vars = $this->extractTemplateVariables($templateArr);
 			if (empty($vars)) {
@@ -507,33 +561,33 @@ class WhatsAppApiService{
 
 			foreach ($vars as $v) {
 				WhatsAppTemplateFieldMapping::create([
-					'id'                => (string) Str::uuid(),
-					'organization_id'   => $orgId,
-					'template_id'       => $templateId,
+					'id' => (string) Str::uuid(),
+					'organization_id' => $orgId,
+					'template_id' => $templateId,
 					'template_language' => $template->language,
 					'template_variable' => $v['template_variable'],
-					'component_type'    => $v['component_type'],
-					'button_index'      => $v['button_index'],
-					'crm_module'        => null,
-					'crm_field'         => null,
+					'component_type' => $v['component_type'],
+					'button_index' => $v['button_index'],
+					'crm_module' => null,
+					'crm_field' => null,
 				]);
 
 				$mappings[] = [
 					'template_variable' => $v['template_variable'],
-					'crm_module'        => '',
-					'crm_field'         => '',
-					'component_type'    => strtolower($v['component_type']),
+					'crm_module' => '',
+					'crm_field' => '',
+					'component_type' => strtolower($v['component_type']),
 				];
 			}
 
 			return [
 				'status' => true,
-				'type'   => 'init',
-				'data'   => [
-					'module'      => '',
+				'type' => 'init',
+				'data' => [
+					'module' => '',
 					'template_id' => $templateId,
-					'language'    => $template->language,
-					'mappings'    => $mappings
+					'language' => $template->language,
+					'mappings' => $mappings
 				]
 			];
 		}
@@ -555,23 +609,24 @@ class WhatsAppApiService{
 				->where('template_id', $templateId)
 				->where('template_variable', $map['template_variable'])
 				->update([
-					'module'         => $data['module'] ?? null,
-					'crm_module'     => $map['crm_module'] ?? null,
-					'crm_field'      => $map['crm_field'] ?? null,
+					'module' => $data['module'] ?? null,
+					'crm_module' => $map['crm_module'] ?? null,
+					'crm_field' => $map['crm_field'] ?? null,
 					'component_type' => strtoupper($map['component_type'] ?? 'BODY'),
 				]);
 		}
 		return [
-			'status'  => true,
-			'type'    => 'update',
+			'status' => true,
+			'type' => 'update',
 			'message' => 'Template mapping updated successfully'
 		];
 	}
-	public function buildTemplateComponents(string $organizationId,string $templateId,string $module,$record ): array {
+	public function buildTemplateComponents(string $organizationId, string $templateId, string $module, $record): array
+	{
 		$template = WhatsAppTemplate::where('id', $templateId)
 			->where('organization_id', $organizationId)
 			->first();
-		if (!$template){
+		if (!$template) {
 			return [
 				'status' => false,
 				'message' => 'WhatsApp template not found',
@@ -724,20 +779,24 @@ class WhatsAppApiService{
 	private function buildButtonParams(array $button, array $valueMap, bool $isNamed): array
 	{
 		if ($isNamed) {
-			return [[
-				'type' => 'text',
-				'text' => reset($valueMap)
-			]];
+			return [
+				[
+					'type' => 'text',
+					'text' => reset($valueMap)
+				]
+			];
 		}
 
 		// POSITIONAL ({{1}})
-		return [[
-			'type' => 'text',
-			'text' => reset($valueMap)
-		]];
+		return [
+			[
+				'type' => 'text',
+				'text' => reset($valueMap)
+			]
+		];
 	}
 
-	public function getTemplates(string $organizationId, string $channelId): array 
+	public function getTemplates(string $organizationId, string $channelId): array
 	{
 		$query = WhatsAppTemplate::where(
 			'organization_id',
@@ -752,53 +811,53 @@ class WhatsAppApiService{
 
 		$values = $templates->map(function ($tpl) {
 			return [
-				'id'           => $tpl->id,
+				'id' => $tpl->id,
 				'organization_id' => $tpl->organization_id,
-				'template_id'  => $tpl->template_id,   // Meta ID
-				'module'	=> $tpl->module,
-				'name'         => $tpl->template_name,
-				'language'     => $tpl->language,
-				'status'       => $tpl->status,
-				'category'     => $tpl->category,
-				'format'       => $tpl->format,
-				'components'   => $tpl->components,
-				'business_id'  => $tpl->business_id,
+				'template_id' => $tpl->template_id,   // Meta ID
+				'module' => $tpl->module,
+				'name' => $tpl->template_name,
+				'language' => $tpl->language,
+				'status' => $tpl->status,
+				'category' => $tpl->category,
+				'format' => $tpl->format,
+				'components' => $tpl->components,
+				'business_id' => $tpl->business_id,
 				'whatsapp_channel_id' => $tpl->whatsapp_channel_id,
 				'created_by' => $tpl->created_by,
 			];
 		})->values();
 
-		return ['success' => true,'values'=> $values];	
+		return ['success' => true, 'values' => $values];
 	}
-	public function getTemplatesByModule(string $organizationId, string $channelId, ?string $module = null ): array
-        {
-                $query = WhatsAppTemplate::where('organization_id',$organizationId)
-		 	->where('module', $module);
+	public function getTemplatesByModule(string $organizationId, string $channelId, ?string $module = null): array
+	{
+		$query = WhatsAppTemplate::where('organization_id', $organizationId)
+			->where('module', $module);
 
-                if (!empty($channelId)) {
-                        $query->where('whatsapp_channel_id', $channelId);
-                }
-                $templates = $query->orderBy('template_name')->get();
-                $values = $templates->map(function ($tpl) {
-                        return [
-                                'id'           => $tpl->id,
-                                'organization_id' => $tpl->organization_id,
-                                'template_id'  => $tpl->template_id,   // Meta ID
-                                'module'        => $tpl->module,
-                                'name'         => $tpl->template_name,
-                                'language'     => $tpl->language,
-                                'status'       => $tpl->status,
-                                'category'     => $tpl->category,
-                                'format'       => $tpl->format,
-                                'components'   => $tpl->components,
-                                'business_id'  => $tpl->business_id,
-                                'whatsapp_channel_id' => $tpl->whatsapp_channel_id,
-                                'created_by' => $tpl->created_by,
-                        ];
-                })->values();
+		if (!empty($channelId)) {
+			$query->where('whatsapp_channel_id', $channelId);
+		}
+		$templates = $query->orderBy('template_name')->get();
+		$values = $templates->map(function ($tpl) {
+			return [
+				'id' => $tpl->id,
+				'organization_id' => $tpl->organization_id,
+				'template_id' => $tpl->template_id,   // Meta ID
+				'module' => $tpl->module,
+				'name' => $tpl->template_name,
+				'language' => $tpl->language,
+				'status' => $tpl->status,
+				'category' => $tpl->category,
+				'format' => $tpl->format,
+				'components' => $tpl->components,
+				'business_id' => $tpl->business_id,
+				'whatsapp_channel_id' => $tpl->whatsapp_channel_id,
+				'created_by' => $tpl->created_by,
+			];
+		})->values();
 
-                return ['success' => true,'values'=> $values];
-        }
+		return ['success' => true, 'values' => $values];
+	}
 	public function getTemplateByName(string $templateName): array
 	{
 		$url = "{$this->baseUrl}/{$this->businessId}/message_templates";
@@ -847,9 +906,10 @@ class WhatsAppApiService{
 			]
 		];
 	}
-	public function sendTextMessage(string $to,string $message,array $logData): array {
+	public function sendTextMessage(string $to, string $message, array $logData): array
+	{
 		$log = $this->createMessageLog($logData);
-		
+
 		$response = self::request(
 			"{$this->baseUrl}/{$this->phoneNumberId}/messages",
 			$this->accessToken,
@@ -916,7 +976,8 @@ class WhatsAppApiService{
 
 		return array_merge($response, ['log' => $log]);
 	}
-	public function sendTemplateMessage(string $to,string $templateName,string $language,array $components,array $logData ): array {
+	public function sendTemplateMessage(string $to, string $templateName, string $language, array $components, array $logData): array
+	{
 		$log = $this->createMessageLog($logData);
 
 		$response = self::request(
@@ -937,7 +998,8 @@ class WhatsAppApiService{
 		$this->updateMessageLog($log, $response);
 		return array_merge($response, ["log" => $log]);
 	}
-	public function updateMessageLog(WhatsAppMessage $message, array $response): void {
+	public function updateMessageLog(WhatsAppMessage $message, array $response): void
+	{
 		$existingInfo = [];
 		if (!empty($message->info)) {
 			$existingInfo = is_array($message->info) ? $message->info : json_decode($message->info, true);
@@ -945,28 +1007,29 @@ class WhatsAppApiService{
 
 		if ($response['success'] ?? false) {
 			$newInfo = array_merge($existingInfo, [
-				'status'   => 'sent',
+				'status' => 'sent',
 				'response' => $response
 			]);
 
 			$message->update([
-				'status'     => 'sent',
+				'status' => 'sent',
 				'message_id' => $response['response']['messages'][0]['id'] ?? null,
-				'info'       => json_encode($newInfo, JSON_UNESCAPED_UNICODE)
+				'info' => json_encode($newInfo, JSON_UNESCAPED_UNICODE)
 			]);
 		} else {
 			$newInfo = array_merge($existingInfo, [
 				'status' => 'failed',
-				'error'  => $response
+				'error' => $response
 			]);
 
 			$message->update([
 				'status' => 'failed',
-				'info'   => json_encode($newInfo, JSON_UNESCAPED_UNICODE)
+				'info' => json_encode($newInfo, JSON_UNESCAPED_UNICODE)
 			]);
 		}
 	}
-	public function createMessageLog(array $data): WhatsAppMessage{
+	public function createMessageLog(array $data): WhatsAppMessage
+	{
 		return WhatsAppMessage::create([
 			'id' => (string) Str::uuid(),
 			'organization_id' => $data['organization_id'],
@@ -986,7 +1049,7 @@ class WhatsAppApiService{
 			'created_by' => auth()->id(),
 			'created_at' => now(),
 			'updated_at' => now(),
-		]);	
+		]);
 	}
 	public function fetchAndSyncTemplates(string $organizationId, string $channelId): array
 	{
@@ -1014,20 +1077,20 @@ class WhatsAppApiService{
 			$template = WhatsAppTemplate::updateOrCreate(
 				[
 					'organization_id' => $organizationId,
-					'business_id'     => $this->businessId,
-					'template_name'   => $tpl['name'],
-					'language'        => $tpl['language'],
+					'business_id' => $this->businessId,
+					'template_name' => $tpl['name'],
+					'language' => $tpl['language'],
 				],
 				[
-					'id'                  => (string) Str::uuid(),
-					'template_id'          => $tpl['id'],
-					'whatsapp_channel_id'  => $channelId,
-					'module'            => null,
-					'created_by'           => auth()->id(),
-					'format'               => $tpl['parameter_format'],
-					'status'               => $tpl['status'],
-					'components'           => $tpl['components'] ?? [],
-					'category'             => $tpl['category'] ?? null,
+					'id' => (string) Str::uuid(),
+					'template_id' => $tpl['id'],
+					'whatsapp_channel_id' => $channelId,
+					'module' => null,
+					'created_by' => auth()->id(),
+					'format' => $tpl['parameter_format'],
+					'status' => $tpl['status'],
+					'components' => $tpl['components'] ?? [],
+					'category' => $tpl['category'] ?? null,
 				]
 			);
 
@@ -1044,7 +1107,7 @@ class WhatsAppApiService{
 			/** 2️⃣ AUTO CREATE TEMPLATE FIELD MAPPINGS */
 			$templateArr = [
 				'parameter_format' => $template->format,
-				'components'       => $template->components,
+				'components' => $template->components,
 			];
 
 			$variables = $this->extractTemplateVariables($templateArr);
@@ -1053,29 +1116,29 @@ class WhatsAppApiService{
 
 				WhatsAppTemplateFieldMapping::firstOrCreate(
 					[
-						'organization_id'   => $organizationId,
-						'template_id'       => $template->id,
+						'organization_id' => $organizationId,
+						'template_id' => $template->id,
 						'template_variable' => $var['template_variable'],
-						'component_type'    => $var['component_type'],
-						'button_index'      => $var['button_index'],
+						'component_type' => $var['component_type'],
+						'button_index' => $var['button_index'],
 					],
 					[
-						'id'                => (string) Str::uuid(),
+						'id' => (string) Str::uuid(),
 						'template_language' => $template->language,
-						'crm_module'        => null,
-						'crm_field'         => null,
+						'crm_module' => null,
+						'crm_field' => null,
 					]
 				);
 			}
 
 			/** 3️⃣ Load mappings for response */
 			$syncedTemplates[] = [
-				'template_id'   => $template->id,
+				'template_id' => $template->id,
 				'template_name' => $template->template_name,
-				'language'      => $template->language,
-				'status'        => $template->status,
-				'category'      => $template->category,
-				'mappings'      => WhatsAppTemplateFieldMapping::where(
+				'language' => $template->language,
+				'status' => $template->status,
+				'category' => $template->category,
+				'mappings' => WhatsAppTemplateFieldMapping::where(
 					'template_id',
 					$template->id
 				)->get(),
@@ -1083,24 +1146,25 @@ class WhatsAppApiService{
 		}
 
 		return [
-			'success'   => true,
-			'message'   => 'Templates synced and mappings initialized successfully',
+			'success' => true,
+			'message' => 'Templates synced and mappings initialized successfully',
 			'templates' => $syncedTemplates
 		];
 	}
 
-	public function createMediaLog(string $orgId,string $channelId,string $mediaId,$file,string $localPath) {
+	public function createMediaLog(string $orgId, string $channelId, string $mediaId, $file, string $localPath)
+	{
 		return WhatsAppMedia::create([
-			'id'              => (string) Str::uuid(),
+			'id' => (string) Str::uuid(),
 			'organization_id' => $orgId,
-			'whatsapp_channel_id'  => $channelId,
-			'media_id'        => $mediaId,
-			'mime_type'       => $file->getMimeType(),
-			'file_name'       => $file->getClientOriginalName(),
-			'local_path'      => $localPath,
-			'created_by'      => auth()->id(),
-			'created_at'      => now(),
-			'updated_at'      => now(),
+			'whatsapp_channel_id' => $channelId,
+			'media_id' => $mediaId,
+			'mime_type' => $file->getMimeType(),
+			'file_name' => $file->getClientOriginalName(),
+			'local_path' => $localPath,
+			'created_by' => auth()->id(),
+			'created_at' => now(),
+			'updated_at' => now(),
 		]);
 	}
 	public function uploadMediaToWhatsApp($file, string $channelId): array
@@ -1138,14 +1202,15 @@ class WhatsAppApiService{
 			];
 		}
 		// Save media log
-		$result = $this->createMediaLog($this->organizationId,$channelId,$response['response']['id'],$file, $file->store('uploads', 'whatsapp') );
+		$result = $this->createMediaLog($this->organizationId, $channelId, $response['response']['id'], $file, $file->store('uploads', 'whatsapp'));
 		return [
 			'success' => true,
 			'media_id' => $response['response']['id'],
-			'id'=>$result->id,
+			'id' => $result->id,
 		];
 	}
-	public function sendMedia_Message(string $to,string $type,string $id,string $mediaId,?string $caption,array $logData ): array {
+	public function sendMedia_Message(string $to, string $type, string $id, string $mediaId, ?string $caption, array $logData): array
+	{
 
 		$log = $this->createMessageLog(array_merge($logData, [
 			'message' => $caption,
@@ -1160,12 +1225,12 @@ class WhatsAppApiService{
 			]
 		];
 
-		if ($caption && in_array($type, ['image','video','document'])) {
+		if ($caption && in_array($type, ['image', 'video', 'document'])) {
 			$payload[$type]['caption'] = $caption;
 		}
 
 		$response = self::request(
-			 "{$this->baseUrl}/{$this->phoneNumberId}/messages",
+			"{$this->baseUrl}/{$this->phoneNumberId}/messages",
 			$this->accessToken,
 			$payload
 		);
@@ -1174,10 +1239,11 @@ class WhatsAppApiService{
 
 		return array_merge($response, ['log' => $log]);
 	}
-	public function validateTemplateMappings(string $orgId,string $templateId,string $module): array {
+	public function validateTemplateMappings(string $orgId, string $templateId, string $module): array
+	{
 		// 1️⃣ Fetch template
 		$template = WhatsAppTemplate::where('id', $templateId)
-                        ->where('organization_id', $orgId)
+			->where('organization_id', $orgId)
 			->first();
 		if (!$template) {
 			return [
@@ -1385,10 +1451,10 @@ class WhatsAppApiService{
 			foreach ($records as $row) {
 				foreach ($phoneFields as $field) {
 					$results[] = [
-						'module'     => $module,
-						'record_id'  => $row->id,
-						'crm_field'  => $field->getFieldName(),
-						'crm_value'  => $fromNumber,
+						'module' => $module,
+						'record_id' => $row->id,
+						'crm_field' => $field->getFieldName(),
+						'crm_value' => $fromNumber,
 					];
 				}
 			}
@@ -1521,7 +1587,7 @@ class WhatsAppApiService{
 				// 3. Get phone fields
 				$fieldManager = \App\Models\FieldModelManager::make($module, 'EditView');
 				$fields = $fieldManager->getFields();
-				
+
 				$phoneFields = [];
 				foreach ($fields as $field) {
 					if (in_array($field->getFieldType(), ['phone', 'mobile'])) {
@@ -1536,10 +1602,10 @@ class WhatsAppApiService{
 				// 4. Build Query
 				// Assume table name is snake_case plural of module.
 				$tableName = strtolower(\Illuminate\Support\Str::plural($module));
-				
+
 				$query = DB::table($tableName)
 					->where('deleted', 0);
-				
+
 				$query->where(function ($q) use ($phoneFields, $searchNumber) {
 					foreach ($phoneFields as $field) {
 						// Using LIKE for partial match
@@ -1563,8 +1629,8 @@ class WhatsAppApiService{
 
 					$results[] = [
 						'related_module' => $module,
-						'related_id'     => $record->id,
-						'crm_field'      => $matchedField ?? $phoneFields[0],
+						'related_id' => $record->id,
+						'crm_field' => $matchedField ?? $phoneFields[0],
 					];
 				}
 
